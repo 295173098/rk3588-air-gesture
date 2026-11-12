@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 简单手掌矢量图标作为启动图前景 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.6"
+        android:scaleY="0.6"
+        android:translateX="21.6"
+        android:translateY="21.6">
+        <path
+            android:fillColor="#4CAF50"
+            android:pathData="M40,52V28c0,-2.2 1.8,-4 4,-4s4,1.8 4,4v20h3V24c0,-2.2 1.8,-4 4,-4s4,1.8 4,4v24h3V28c0,-2.2 1.8,-4 4,-4s4,1.8 4,4v24h3V34c0,-2.2 1.8,-4 4,-4s4,1.8 4,4v22c0,13.3 -8,24 -19.4,24h-1.3C52.5,80 44,72 41,62.4L40,52z" />
+    </group>
+</vector>

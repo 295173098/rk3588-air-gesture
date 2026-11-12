@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="lib_accessibility_label">手势识别引擎（隔空手势注入）</string>
+    <string name="lib_accessibility_description">手势识别库用于将隔空手势转换为全局滑动、点击、方向键等系统操作。本服务不读取屏幕内容，仅注入触摸手势。</string>
+    <string name="lib_notif_title">手势识别引擎运行中</string>
+    <string name="lib_notif_text">NPU 隔空手势识别</string>
+    <string name="lib_channel_name">手势识别服务</string>
+</resources>

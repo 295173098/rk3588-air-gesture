@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="accent_npu">#4CAF50</color>
+    <color name="bg_dark">#121212</color>
+    <color name="hud_bg">#B3000000</color>
+
+    <style name="Theme.AirGesture" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/accent_npu</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:windowBackground">@color/bg_dark</item>
+    </style>
+</resources>

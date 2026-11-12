@@ -1,0 +1,26 @@
+# Android
+*.apk
+*.aab
+local.properties
+.gradle/
+build/
+app/build/
+gesturelib/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 本地调试产物 (不上传)
+_downloads/
+dist/
+docs/*.log
+*.log
+
+# 明确排除
+AGENTS.md
+.zcode/

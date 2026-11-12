@@ -1,0 +1,49 @@
+非商业使用许可协议 / Non-Commercial Use License
+================================================
+
+版权所有 (c) 2026 295173098
+
+中文（以中文版本为准）
+----------------------
+
+一、授权范围
+1. 本项目及其全部源代码、模型、二进制产物（下称"本软件"）仅供个人学习、
+   研究、爱好者自用等**非商业用途**免费使用。
+2. 允许个人用户复制、修改、运行本软件，并将修改后的版本**以相同协议**
+   分享给其他个人用户。
+
+二、商业使用限制
+1. 任何**商业用途**（包括但不限于：销售、租赁、集成到商业产品或商业服务、
+   以本软件或其衍生作品营利、在商业环境内部署使用）均**不被授权**，
+   须事先取得版权所有者的书面许可。
+2. 未经授权的商业使用，版权所有者保留追究法律责任的权利。
+
+三、分发要求
+1. 分发本软件或其衍生作品时，必须保留本协议全文与版权声明。
+2. 不得将本软件（或修改版）单独作为商品出售或变相收费。
+3. 分发时需注明来源仓库：https://github.com/295173098/rk3588-air-gesture
+
+四、免责声明
+1. 本软件按"现状"提供，不附带任何明示或默示的担保。
+2. 作者不对因使用本软件产生的任何直接或间接损失承担责任。
+3. 本软件依赖 root 权限与特定硬件（RK3588），使用者需自行承担适用性与
+   安全风险。
+
+English (summary; the Chinese version prevails)
+------------------------------------------------
+
+Copyright (c) 2026 295173098
+
+1. This software and all its source code, models and binaries ("the
+   Software") are provided FREE OF CHARGE for PERSONAL, NON-COMMERCIAL
+   use only: learning, research and hobbyist use.
+2. COMMERCIAL USE is NOT granted. Any commercial purpose (selling,
+   bundling into commercial products or services, for-profit
+   deployment, use inside a business environment) requires prior
+   written permission from the copyright holder.
+3. Redistribution of the Software or derivatives is allowed only under
+   this same license, keeping this notice and the copyright statement
+   intact. The Software may not be sold or charged for as a standalone
+   product. Source: https://github.com/295173098/rk3588-air-gesture
+4. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+   THE AUTHOR SHALL NOT BE LIABLE FOR ANY DAMAGES ARISING FROM ITS USE.
