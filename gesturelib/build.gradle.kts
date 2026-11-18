@@ -50,6 +50,11 @@ android {
         }
     }
 
+    // JVM 单元测试 (离线仿真): android.util.Log 等调用返回默认值而非抛异常
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     publishing {
         singleVariant("release")
     }
@@ -58,6 +63,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // 发布坐标: com.rk3588:gesturelib:1.1.0

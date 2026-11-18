@@ -132,13 +132,42 @@ GestureEngine.flipH          // 水平翻转 (默认 false = 相机原始画面)
 GestureEngine.bootStart      // 开机自启标记 (配合 BOOT_COMPLETED)
 ```
 
-## 六、库自动合并的内容
+进阶参数集中在 [SmParams]（剪刀手确认帧、挥手摆幅、停止确认时长、丢帧去抖等），
+默认值来自离线仿真扫描，一般无需调整；确有需要可构造
+`GestureStateMachine(listener) { SmParams(...) }` 覆盖。
+
+## 六、离线仿真与调参
+
+`gesturelib/src/test/java/com/rk3588/gesturelib/sim/` 内置一套 **JVM 离线仿真**，
+不需要真机即可回归和调优时序识别：
+
+- **SimHand**: 参数化 21 关键点手掌模型（张掌/拳头/剪刀手姿势 + 卷曲度插值 + 高斯噪声）
+- **SimClassifier**: `gesture_npu.cpp classify_gesture()` 的 Kotlin 镜像（改 C++ 须同步）
+- **Scenarios**: 17 类场景 × N 个随机种子——4 方向滑动、挥手（常规/大摆幅/停住）、
+  拳头确定、剪刀手返回、张掌↔握拳过渡、反复开合、斜向滑动、静置干扰等
+- **GestureSim**: 喂给**生产状态机**逐帧跑，统计检出率 / 误触 / 触发延迟
+
+已通过仿真修复的问题（真机前就拦下）：
+
+1. 启动初期 uptimeMillis 接近 0 时被全局动作间隔吞掉前 3 秒动作
+2. 分类器单帧 NONE 抖动会清空运动轨迹 → 短促滑动/挥手漏检
+3. 偶发丢帧立即清挂起 → 滑动被误杀（改为 200ms 去抖）
+4. 停止确认阈值低于掌心抖动 → 挂起永远等不到静止窗口
+5. 慢速握拳过渡期短暂呈现剪刀手形态 → 误触返回（victoryConfirmMin=9 根治）
+
+调参流程（见 `sim/SweepTest`）: 去掉 `@Ignore` → 跑网格扫描 →
+按「检出率 − 误触×20 − 延迟惩罚」挑最优 → 回写 `SmParams` → 恢复 `@Ignore`。
+`GestureSimulationTest` 是日常回归门禁（当前指标: 100% 检出 / 0 误触 / ~66ms）。
+
+> 仿真覆盖时序逻辑与阈值鲁棒性；NPU 模型质量、光照、距离等真机因素仍需实测验证。
+
+## 七、库自动合并的内容
 
 - 权限: CAMERA / FOREGROUND_SERVICE(camera) / POST_NOTIFICATIONS / SYSTEM_ALERT_WINDOW
 - 组件: 前台服务 `GestureService` + 无障碍服务 `GestureAccessibility`
 - 资产: RKNN 模型 ×2 + librknnrt.so / libgesture_npu.so / libc++_shared.so
 
-## 七、常见问题
+## 八、常见问题
 
 | 现象 | 处理 |
 |------|------|

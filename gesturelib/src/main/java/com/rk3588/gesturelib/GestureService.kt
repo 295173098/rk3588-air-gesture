@@ -36,9 +36,11 @@ class GestureService : Service() {
 
     private var camera: CameraController? = null
     private val overlay: RecognitionOverlay by lazy { RecognitionOverlay(this) }
-    private val sm = GestureStateMachine { action, gesture, dir ->
-        GestureEngine.dispatchAction(action, gesture, dir)
-    }
+    private val sm = GestureStateMachine(
+        listener = { action, gesture, dir ->
+            GestureEngine.dispatchAction(action, gesture, dir)
+        }
+    )
     private val out = RknnBridge.allocOut()
     private val busy = AtomicBoolean(false)
 
