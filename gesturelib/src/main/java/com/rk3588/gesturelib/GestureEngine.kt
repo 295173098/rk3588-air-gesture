@@ -17,9 +17,11 @@ import androidx.core.content.ContextCompat
  * engine.showOverlay(true)                             // 1. 开启悬浮识别框
  * engine.startRecognition()                            // 2. 开始识别
  * engine.stopRecognition()                             //    关闭识别
- * engine.setAction(GestureId.THUMB_UP, null)           // 4. 该手势只识别不动作
- * engine.setAction(GestureId.POINT, GestureAction.DPAD_UP) // 4. 重映射动作
+ * engine.setAction(GestureId.WAVE, null)               // 4. 该手势只识别不动作
+ * engine.setAction(GestureId.FIST, GestureAction.BACK) // 4. 重映射动作
  * ```
+ *
+ * 手势集: ✋ 张掌挥动 = 4 方向滑动 · ✊ 拳头 = 确定 · ✌️ 剪刀手 = 返回 · 👋 挥手 = 只回调
  */
 object GestureEngine {
     private const val TAG = "GestureEngine"
@@ -69,7 +71,6 @@ object GestureEngine {
                 if (RootShell.hasRoot()) {
                     RootShell.autoGrant(ctx.packageName)
                     Log.i(TAG, "accessibility auto-repaired via root")
-                    if (GestureConfig.mouseMode) VirtualMouse.setup()
                 }
             }.start()
         }
@@ -163,9 +164,6 @@ object GestureEngine {
     var confirmFrames: Int
         get() = GestureConfig.confirmFrames
         set(v) = run { GestureConfig.confirmFrames = v }
-    var volumeRepeat: Boolean
-        get() = GestureConfig.volumeRepeat
-        set(v) = run { GestureConfig.volumeRepeat = v }
     var bootStart: Boolean
         get() = GestureConfig.bootStart
         set(v) = run { GestureConfig.bootStart = v }
@@ -181,16 +179,6 @@ object GestureEngine {
     /** 动作触发点: 回调 -> 映射决策 -> (处理器 | 内置执行) */
     internal fun dispatchAction(action: GestureAction, gesture: Int, dir: Int) {
         listener?.onGestureTriggered(gesture, dir, action)
-
-        // 鼠标模式: ☝️/✌️ 已由 MouseController 接管为 光标/左右键/滚轮
-        if (GestureConfig.mouseMode) {
-            val replaced = action == GestureAction.DPAD_UP ||
-                    action == GestureAction.DPAD_DOWN ||
-                    action == GestureAction.DPAD_LEFT ||
-                    action == GestureAction.DPAD_RIGHT ||
-                    (action == GestureAction.BACK && gesture == GestureId.VICTORY)
-            if (replaced) return
-        }
 
         // 映射决策: 显式映射(含 null)优先, 否则用触发时的默认动作
         val mapped: GestureAction? = synchronized(this) {

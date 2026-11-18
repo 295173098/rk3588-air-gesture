@@ -13,8 +13,7 @@ add_library(rknnrt SHARED IMPORTED)
 set_target_properties(rknnrt PROPERTIES IMPORTED_LOCATION ${RKNN_LIB_DIR}/librknnrt.so)
 
 add_library(gesture_npu SHARED
-        gesture_npu.cpp
-        virtual_mouse.cpp)
+        gesture_npu.cpp)
 
 find_library(log-lib log)
 

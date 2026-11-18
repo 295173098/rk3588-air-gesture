@@ -38,6 +38,8 @@ import com.rk3588.gesturelib.RootShell
  *  2. 开始/关闭识别            engine.startRecognition / stopRecognition
  *  3. 实时手势识别回调          engine.setOnGestureListener
  *  4. 手势→动作映射            engine.setAction / setGestureEnabled / setActionHandler
+ *
+ * 手势集: ✋ 张掌挥动 = 方向滑动 · ✊ 拳头 = 确定 · ✌️ 剪刀手 = 返回 · 👋 挥手 = 只回调
  */
 class MainActivity : AppCompatActivity() {
 
@@ -72,9 +74,7 @@ class MainActivity : AppCompatActivity() {
     // ---- 3. 实时手势识别回调 ----
     private val listener = object : GestureListener {
         override fun onFrame(result: FrameResult) {
-            lastGestureName = GestureId.names.getOrElse(result.gesture) { "?" } +
-                    if (result.gesture == GestureId.POINT && result.dir > 0)
-                        "·" + GestureId.dirNames.getOrElse(result.dir) { "" } else ""
+            lastGestureName = GestureId.names.getOrElse(result.gesture) { "?" }
             lastFrameMs = result.frameMs
         }
 
@@ -82,8 +82,11 @@ class MainActivity : AppCompatActivity() {
             ui.post {
                 val name = GestureId.names.getOrElse(gesture) { "?" } +
                         if (dir > 0) "·" + GestureId.dirNames.getOrElse(dir) { "" } else ""
-                val mapped = if (GestureEngine.isGestureEnabled(gesture))
-                    defaultAction.name else "只识别"
+                val mapped = when {
+                    !GestureEngine.isGestureEnabled(gesture) -> "只识别"
+                    defaultAction == GestureAction.NONE -> "只回调"
+                    else -> defaultAction.name
+                }
                 appendLog("触发 $name → $mapped")
             }
         }
@@ -172,21 +175,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         // ---- 4. 手势映射开关 (关 = 只识别不动作) ----
-        bindSwitch(R.id.sw_palm, GestureId.PALM, "✋ 挥动滑动")
-        bindSwitch(R.id.sw_thumb_up, GestureId.THUMB_UP, "👍 音量+")
-        bindSwitch(R.id.sw_thumb_down, GestureId.THUMB_DOWN, "👎 音量-")
-        bindSwitch(R.id.sw_victory, GestureId.VICTORY, "✌️ 返回")
-        bindSwitch(R.id.sw_point, GestureId.POINT, "☝️ 方向键")
-        bindSwitch(R.id.sw_fist, GestureId.FIST, "✊ 锁定")
-        val swGrab = findViewById<Switch>(R.id.sw_grab)
-        swGrab.isChecked = GestureConfig.enableGrab
-        swGrab.setOnCheckedChangeListener { _, c -> GestureConfig.enableGrab = c }
-        val swMouse = findViewById<Switch>(R.id.sw_mouse)
-        swMouse.isChecked = GestureConfig.mouseMode
-        swMouse.setOnCheckedChangeListener { _, c ->
-            GestureConfig.mouseMode = c
-            appendLog("鼠标模式 ${if (c) "开 (☝️光标 🤏左键 ✌️右键/滚轮)" else "关"}")
-        }
+        bindSwitch(R.id.sw_palm, GestureId.PALM, "✋ 张掌挥动 = 方向滑动")
+        bindSwitch(R.id.sw_victory, GestureId.VICTORY, "✌️ 剪刀手 = 返回")
+        bindSwitch(R.id.sw_fist, GestureId.FIST, "✊ 拳头 = 确定")
+        bindSwitch(R.id.sw_wave, GestureId.WAVE, "👋 挥动手臂 (只回调)")
 
         // 自定义动作处理器示例 (打开后所有动作交给外部处理, 库不再执行内置动作)
         // GestureEngine.setActionHandler(ActionHandler { action, gesture, dir ->

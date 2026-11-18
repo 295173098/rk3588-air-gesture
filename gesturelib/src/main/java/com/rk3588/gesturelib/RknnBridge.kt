@@ -5,9 +5,9 @@ import android.content.res.AssetManager
 /**
  * JNI 桥接：RK3588 NPU 手势推理
  *
- * 输出数组布局 (72 floats):
+ * 输出数组布局 (74 floats):
  *  [0] 单帧总耗时 ms
- *  [1] 手势 id: 0无 1张掌 2握拳 3V 4指 5拇指上 6拇指下
+ *  [1] 手势 id: 0无 1张掌 2拳头 3剪刀手 (挥手=4 由状态机检测)
  *  [2] landmark presence 分数
  *  [3] 左右手分数
  *  [4] 本帧 palm 检测是否有效 (1/0)
@@ -24,9 +24,6 @@ object RknnBridge {
     const val G_PALM = 1
     const val G_FIST = 2
     const val G_VICTORY = 3
-    const val G_POINT = 4
-    const val G_THUMB_UP = 5
-    const val G_THUMB_DOWN = 6
 
     // 输出数组偏移 (与 gesture_npu.cpp 中 OUT_* 一致)
     const val OUT_MS = 0
@@ -39,14 +36,14 @@ object RknnBridge {
     const val OUT_PALM_W = 7
     const val OUT_PALM_H = 8
     const val OUT_LM = 9
-    const val OUT_DIR = 72
-    const val OUT_OPEN = 73
+    const val OUT_DIR = 72      // 保留偏移 (恒 0, 滑动方向由状态机计算)
+    const val OUT_OPEN = 73     // 张开度: 伸直手指数 (含拇指) 0..5
 
-    /** 点指方向 (与 C++ OUT_DIR 一致) */
+    /** 滑动方向名 (状态机触发方向滑动时上报 1..4) */
     val dirNames = arrayOf("", "上", "下", "左", "右")
 
     val gestureNames = arrayOf(
-        "无", "✋ 张掌", "✊ 握拳", "✌️ V", "☝️ 指", "👍 拇指上", "👎 拇指下"
+        "无", "✋ 张掌", "✊ 拳头", "✌️ 剪刀手", "👋 挥手"
     )
 
     fun init(am: AssetManager): Int = nativeInit(am)

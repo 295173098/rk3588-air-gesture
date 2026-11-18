@@ -3,16 +3,14 @@ package com.rk3588.gesturelib
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.util.Log
 
 /**
- * 无障碍服务：全局注入滑动/点击手势与系统级操作（返回/主页）。
+ * 无障碍服务：全局注入滑动手势与系统级操作（返回）。
  */
 class GestureAccessibility : AccessibilityService() {
     companion object {
@@ -62,13 +60,14 @@ class GestureAccessibility : AccessibilityService() {
         dispatch(path, durationMs)
     }
 
-    /** 注入一次点击 (屏幕中心偏移) */
-    fun tap(xRatio: Float = 0.5f, yRatio: Float = 0.5f) {
+    /** 注入一个横向滑动 */
+    fun swipeHorizontal(fromXRatio: Float, toXRatio: Float, durationMs: Long = 220) {
+        val y = screenH / 2f
         val path = Path().apply {
-            moveTo(screenW * xRatio, screenH * yRatio)
-            lineTo(screenW * xRatio, screenH * yRatio)
+            moveTo(screenW * fromXRatio, y)
+            lineTo(screenW * toXRatio, y)
         }
-        dispatch(path, 60)
+        dispatch(path, durationMs)
     }
 
     private fun dispatch(path: Path, durationMs: Long) {
@@ -82,5 +81,4 @@ class GestureAccessibility : AccessibilityService() {
     }
 
     fun globalBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
-    fun globalHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
 }

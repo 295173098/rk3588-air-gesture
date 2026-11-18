@@ -1,17 +1,22 @@
 package com.rk3588.gesturelib
 
 import android.util.Log
+import kotlin.math.abs
 
 /**
  * 时序状态机：把每帧的原始手势变成经过防抖/冷却的动作事件。
  * 只负责"何时触发"，动作是否执行由 GestureEngine 的映射决策决定
  * (这样"只识别不动作"模式下 onGestureTriggered 回调依然生效)。
  *
+ * 手势集:
+ *  - ✋ 张掌 + 挥动 → 4 方向滑动 (位移超阈值 + 停止确认, 主轴判定方向)
+ *  - 👋 挥动手臂 → 张掌 X 轴往复摆动 (折返 ≥2 次), 默认只回调不动作
+ *  - ✊ 拳头 → 确定 (CONFIRM)
+ *  - ✌️ 剪刀手 → 返回 (BACK)
+ *
  * 规则:
- *  - 静态手势需连续 [GestureConfig.confirmFrames] 帧确认后触发
- *  - 音量手势按住可连击 (间隔 volumeRepeatMs)
- *  - 张掌(PALM)期间追踪掌心位移，超过阈值触发上滑/下滑
- *  - 张掌→握拳 快速序列 = 抓取(截图)；直接举拳 = 锁定切换
+ *  - 静态姿势需连续 [GestureConfig.confirmFrames] 帧确认后触发
+ *  - 滑动与挥手的区分: 滑动 = 单次大幅位移后停住; 持续摆动 = 挥手
  *  - 任一动作触发后 actionGapMs 内不再触发 (全局动作间隔)
  */
 class GestureStateMachine(
@@ -20,131 +25,98 @@ class GestureStateMachine(
 
     companion object {
         private const val TAG = "GestureSM"
-        private const val SWIPE_WINDOW_MS = 220L      // 位移采样窗口
-        private const val GRAB_HISTORY_MS = 800L      // 张开度历史窗口
-        private const val GRAB_OPEN_MIN = 4           // 起点: ≥4 指张开
-        private const val GRAB_CLOSED_MAX = 1         // 终点: ≤1 指 (半收拢也算)
-        private const val GRAB_DROP_MIN_MS = 120L     // 收拢最短耗时 (滤抖动)
-        private const val GRAB_DROP_MAX_MS = 700L     // 收拢最长耗时
+        // ---- 方向滑动 ----
+        private const val SWIPE_WINDOW_MS = 220L        // 位移采样窗口
+        private const val SWIPE_STOP_CONFIRM_MS = 130L  // 触发前的停止确认 (区分滑动与持续挥动)
+        private const val SWIPE_PENDING_MAX_MS = 800L   // 挂起超时 (慢速漂移不计滑动)
+        private const val SWIPE_REVERSAL_RATIO = 0.45f  // 反向位移超过 阈值×比例 → 取消挂起
+        private const val MOVE_EPS = 0.008f             // 视为"移动中"的最小帧间位移
+        // ---- 挥手 (X 轴往复摆动) ----
+        private const val WAVE_WINDOW_MS = 1000L        // 摆动历史窗口
+        private const val WAVE_SWING_MIN = 0.06f        // 单段摆幅 (图像宽度比例)
+        private const val WAVE_MIN_SWINGS = 2           // 折返次数 (一次完整往返)
+        private const val WAVE_COOLDOWN_MS = 1500L      // 挥手触发最小间隔
     }
 
     // 确认状态
     private var lastRawGesture = 0
-    private var lastDir = 0
     private var confirmCount = 0
 
     // 冷却
     private var lastActionTime = mutableMapOf<String, Long>()
     private var lastAnyAction = 0L                 // 全局动作间隔基准
-    private var lastTriggerGesture = 0             // 已触发过的手势(用于单次触发)
-    private var gestureHoldStart = 0L              // 当前确认手势的起始时间
+    private var lastTriggerGesture = 0             // 已触发过的手势 (单次触发用)
 
-    // 滑动追踪
-    private var swipeHistory = mutableListOf<Pair<Long, Float>>() // (t, palmY)
-    private var lastSwipeDir = 0                    // 0无 1上 2下
+    // 张掌运动轨迹 (t, (x, y)) 图像归一化
+    private val palmHistory = mutableListOf<Pair<Long, Pair<Float, Float>>>()
+    private var lastX = 0f
+    private var lastY = 0f
+    private var hasLastPos = false
+    private var lastMoveT = 0L                     // 最近一次显著移动时间 (停止确认)
 
-    // 抓取 (截图): 张开度下降沿检测 (≥4指 快速收拢到 ≤1指, 无需握拳姿势)
-    private val grabHistory = mutableListOf<Pair<Long, Int>>()
-
-    // 锁定
-    var locked = false
-        private set
+    // 滑动挂起 (位移超阈值后等待停止确认)
+    private var pendingAxis = 0                    // 0无 1横 2纵
+    private var pendingDir = 0                     // 1上 2下 3左 4右
+    private var pendingCrossT = 0L
+    private var pendingX = 0f
+    private var pendingY = 0f
+    private var lastSwipeDir = 0                   // 已触发方向 (同方向需手势离开后才能再次触发)
 
     fun reset() {
         confirmCount = 0
         lastRawGesture = 0
-        lastDir = 0
-        swipeHistory.clear()
+        lastActionTime.clear()
+        lastAnyAction = 0L
+        lastTriggerGesture = 0
+        palmHistory.clear()
+        hasLastPos = false
+        lastMoveT = 0L
+        pendingAxis = 0
+        pendingDir = 0
         lastSwipeDir = 0
-        grabHistory.clear()
     }
 
-    /** 每帧调用: gesture=识别结果, dir=点指方向, palmY=掌心 y, openness=张开度(-1=无效) */
-    fun update(gesture: Int, dir: Int, palmY: Float?, openness: Int, now: Long) {
-        // ---- 抓取检测: 逐帧独立于手势分类 (锁定时不响应) ----
-        if (!locked) detectGrab(openness, now)
-
-        // ---- 确认窗口 (手势+方向 都一致才算连续) ----
-        if (gesture == lastRawGesture && dir == lastDir && gesture != GestureId.NONE) {
+    /** 每帧调用: gesture=识别结果, palmValid/palmX/palmY=掌心框 (图像归一化) */
+    fun update(gesture: Int, palmValid: Boolean, palmX: Float, palmY: Float, now: Long) {
+        // ---- 确认窗口 (静态姿势需连续帧) ----
+        if (gesture == lastRawGesture && gesture != GestureId.NONE) {
             confirmCount++
         } else {
             confirmCount = if (gesture == GestureId.NONE) 0 else 1
             lastRawGesture = gesture
-            lastDir = dir
+            // 手势切换: 重置单次触发与运动轨迹
             if (gesture != lastTriggerGesture) {
                 lastTriggerGesture = 0
-                gestureHoldStart = 0
-                swipeHistory.clear()
+                palmHistory.clear()
+                pendingAxis = 0
+                hasLastPos = false
                 lastSwipeDir = 0
             }
         }
-        val confirmed = confirmCount >= effectiveThreshold(gesture)
-        if (!confirmed) return
-
-        if (gestureHoldStart == 0L) gestureHoldStart = now
-
-        // ---- 锁定逻辑 ----
-        if (locked) {
-            if (gesture == GestureId.FIST && canFire("lock", GestureConfig.cooldownMs.toLong(), now)) {
-                locked = false
-                lastTriggerGesture = gesture
-                mark("lock", now)
-                Log.i(TAG, "UNLOCK")
-                listener(GestureAction.LOCK, gesture, 0)
-            }
-            return
-        }
+        if (confirmCount < effectiveThreshold(gesture)) return
 
         when (gesture) {
-            GestureId.FIST -> {
-                // 锁定切换 (抓取=截图已由张开度下降沿独立检测)
-                if (canFire("lock", GestureConfig.cooldownMs.toLong(), now) &&
-                    lastTriggerGesture != gesture) {
-                    locked = true
-                    lastTriggerGesture = gesture
-                    mark("lock", now)
-                    Log.i(TAG, "LOCK")
-                    listener(GestureAction.LOCK, gesture, 0)
+            GestureId.PALM -> {
+                // 无掌心坐标 (置信度不足) 无法追踪运动, 清轨迹
+                if (!palmValid) {
+                    palmHistory.clear()
+                    pendingAxis = 0
+                    hasLastPos = false
+                    return
                 }
+                trackPalmMotion(palmX, palmY, now, gesture)
             }
 
-            GestureId.THUMB_UP -> fireVolume(GestureAction.VOL_UP, now, gesture)
-            GestureId.THUMB_DOWN -> fireVolume(GestureAction.VOL_DOWN, now, gesture)
-
-            GestureId.VICTORY -> {
-                if (canFire("back", GestureConfig.cooldownMs.toLong(), now) &&
-                    lastTriggerGesture != gesture) {
-                    lastTriggerGesture = gesture
-                    mark("back", now)
-                    listener(GestureAction.BACK, gesture, 0)
-                }
-            }
-
-            GestureId.POINT -> {
-                // ☝️ 指向 = 方向键, 按住连发
-                if (dir != 0 && canFire("dpad", GestureConfig.dpadRepeatMs.toLong(), now)) {
-                    lastTriggerGesture = gesture
-                    mark("dpad", now)
-                    val action = when (dir) {
-                        1 -> GestureAction.DPAD_UP
-                        2 -> GestureAction.DPAD_DOWN
-                        3 -> GestureAction.DPAD_LEFT
-                        else -> GestureAction.DPAD_RIGHT
-                    }
-                    listener(action, gesture, dir)
-                }
-            }
-
-            GestureId.PALM -> trackSwipe(palmY, now, gesture)
+            GestureId.FIST -> fireOnce(GestureAction.CONFIRM, "confirm", now, gesture)
+            GestureId.VICTORY -> fireOnce(GestureAction.BACK, "back", now, gesture)
         }
     }
 
-    /** 音量: 首次触发后若手势保持则按 volumeRepeatMs 连击 */
-    private fun fireVolume(action: GestureAction, now: Long, gesture: Int) {
-        val key = if (action == GestureAction.VOL_UP) "vol_up" else "vol_down"
-        val interval = if (GestureConfig.volumeRepeat) GestureConfig.volumeRepeatMs.toLong()
-        else GestureConfig.cooldownMs.toLong()
-        if (canFire(key, interval, now)) {
+    /** 单次触发类手势 (拳头确定/剪刀手返回): 手势保持期间不重复, 切换手势后才可再触发 */
+    private fun fireOnce(action: GestureAction, key: String, now: Long, gesture: Int) {
+        if (lastTriggerGesture != gesture &&
+            canFire(key, GestureConfig.cooldownMs.toLong(), now)
+        ) {
             lastTriggerGesture = gesture
             mark(key, now)
             listener(action, gesture, 0)
@@ -152,64 +124,122 @@ class GestureStateMachine(
     }
 
     /**
-     * 抓取检测: 张开度从 ≥4 指 快速收拢到 ≤1 指 (下降沿)。
-     * 不要求最终姿势是握拳 —— 半收拢、拇指留存都算。
-     * 触发后清历史, 需重新张开才会再触发。
+     * 张掌运动分析 (确认帧后逐帧调用):
+     *  1. 挥手: X 轴往复摆动, 窗口内折返 ≥ [WAVE_MIN_SWINGS] 次 → 触发
+     *  2. 方向滑动: 位移超阈值进入挂起, 反向回移取消 (判为摆动), 停住后触发
+     * 挥手优先级高于滑动 —— 持续摆动永远不会误触方向滑动。
      */
-    private fun detectGrab(openness: Int, now: Long) {
-        if (openness < 0) {  // 无效帧 (无手/低置信度): 清历史
-            grabHistory.clear()
+    private fun trackPalmMotion(x: Float, y: Float, now: Long, gesture: Int) {
+        // 帧间移动标记 (滑动停止确认用)
+        if (hasLastPos && (abs(x - lastX) > MOVE_EPS || abs(y - lastY) > MOVE_EPS)) {
+            lastMoveT = now
+        }
+        lastX = x; lastY = y; hasLastPos = true
+
+        palmHistory.add(now to (x to y))
+        while (palmHistory.isNotEmpty() && now - palmHistory.first().first > WAVE_WINDOW_MS) {
+            palmHistory.removeAt(0)
+        }
+
+        // ---- 1. 挥手检测 (X 轴往复) ----
+        if (countXSwings() >= WAVE_MIN_SWINGS) {
+            palmHistory.clear()
+            pendingAxis = 0
+            hasLastPos = false
+            if (canFire("wave", WAVE_COOLDOWN_MS, now)) {
+                mark("wave", now)
+                lastTriggerGesture = gesture
+                Log.i(TAG, "WAVE (x-axis oscillation)")
+                listener(GestureAction.NONE, GestureId.WAVE, 0)
+            }
             return
         }
-        grabHistory.add(now to openness)
-        while (grabHistory.isNotEmpty() && now - grabHistory.first().first > GRAB_HISTORY_MS) {
-            grabHistory.removeAt(0)
-        }
-        val maxOpen = grabHistory.maxOfOrNull { it.second } ?: return
-        if (maxOpen < GRAB_OPEN_MIN || openness > GRAB_CLOSED_MAX) return
-        // 最近一次全开时刻
-        val tOpen = grabHistory.lastOrNull { it.second >= GRAB_OPEN_MIN }?.first ?: return
-        val dropMs = now - tOpen
-        if (dropMs < GRAB_DROP_MIN_MS || dropMs > GRAB_DROP_MAX_MS) return
-        if (!GestureConfig.enableGrab) return
-        if (!canFire("shot", GestureConfig.cooldownMs.toLong(), now)) return
-        mark("shot", now)
-        lastTriggerGesture = GestureId.FIST  // 抑制随后的握拳锁定
-        grabHistory.clear()                  // 需重新张开才会再触发
-        Log.i(TAG, "GRAB (openness drop) -> SCREENSHOT")
-        listener(GestureAction.SCREENSHOT, GestureId.FIST, 0)
-    }
 
-    /** 张掌滑动检测 */
-    private fun trackSwipe(palmY: Float?, now: Long, gesture: Int) {
-        if (palmY == null) return
-        swipeHistory.add(now to palmY)
-        while (swipeHistory.isNotEmpty() && now - swipeHistory.first().first > SWIPE_WINDOW_MS * 2) {
-            swipeHistory.removeAt(0)
+        // ---- 2. 方向滑动 ----
+        if (pendingAxis == 0) {
+            val ref = palmHistory.firstOrNull { now - it.first >= SWIPE_WINDOW_MS } ?: return
+            val dx = x - ref.second.first
+            val dy = y - ref.second.second
+            val thresh = GestureConfig.swipeThreshold
+            if (abs(dx) >= thresh || abs(dy) >= thresh) {
+                pendingAxis = if (abs(dx) > abs(dy)) 1 else 2
+                pendingDir = when {
+                    pendingAxis == 1 && dx < 0 -> 3      // 左
+                    pendingAxis == 1 -> 4                // 右
+                    dy < 0 -> 1                          // 上
+                    else -> 2                            // 下
+                }
+                pendingCrossT = now
+                pendingX = x; pendingY = y
+            }
+            return
         }
-        val oldest = swipeHistory.firstOrNull { now - it.first >= SWIPE_WINDOW_MS } ?: return
-        val dy = palmY - oldest.second
-        val thresh = GestureConfig.swipeThreshold
-        if (kotlin.math.abs(dy) >= thresh) {
-            val dir = if (dy < 0) 1 else 2  // y 减小 = 手向上挥 = 上滑
-            // 同方向需手势离开后才能再次触发, 防止持续挥动连发
-            if (dir != lastSwipeDir && canFire("swipe", GestureConfig.cooldownMs.toLong(), now)) {
-                lastSwipeDir = dir
+
+        // 挂起中: 反向位移 → 取消 (判为摆动回移, 不是滑动)
+        val back = if (pendingAxis == 1) x - pendingX else y - pendingY
+        val reversed = (pendingDir == 3 || pendingDir == 1)  // 已向左/上
+        val backAmt = if (reversed) back else -back          // 反向时为正
+        if (backAmt > GestureConfig.swipeThreshold * SWIPE_REVERSAL_RATIO) {
+            pendingAxis = 0
+            return
+        }
+        // 挂起超时 (慢速漂移)
+        if (now - pendingCrossT > SWIPE_PENDING_MAX_MS) {
+            pendingAxis = 0
+            return
+        }
+        // 停止确认: 超过 [SWIPE_STOP_CONFIRM_MS] 无显著移动 → 触发
+        if (now - lastMoveT >= SWIPE_STOP_CONFIRM_MS &&
+            canFire("swipe", GestureConfig.cooldownMs.toLong(), now)
+        ) {
+            if (pendingDir != lastSwipeDir) {
+                lastSwipeDir = pendingDir
                 lastTriggerGesture = gesture
                 mark("swipe", now)
-                swipeHistory.clear()
-                Log.i(TAG, "swipe dir=$dir dy=$dy")
-                listener(
-                    if (dir == 1) GestureAction.SWIPE_UP else GestureAction.SWIPE_DOWN,
-                    gesture, 0
-                )
+                palmHistory.clear()
+                val action = when (pendingDir) {
+                    1 -> GestureAction.SWIPE_UP
+                    2 -> GestureAction.SWIPE_DOWN
+                    3 -> GestureAction.SWIPE_LEFT
+                    else -> GestureAction.SWIPE_RIGHT
+                }
+                Log.i(TAG, "swipe dir=$pendingDir")
+                listener(action, gesture, pendingDir)
             }
+            pendingAxis = 0
+            hasLastPos = false
         }
     }
 
-    /** 锁定/解锁是元动作，需要更长的持续确认，避免误触发 */
+    /** X 轴摆动折返计数: 位移方向反转且单段摆幅 ≥ [WAVE_SWING_MIN] 算一次折返 */
+    private fun countXSwings(): Int {
+        if (palmHistory.size < 3) return 0
+        var swings = 0
+        var dir = 0                                  // 0未定向 1右 -1左
+        var pivot = palmHistory.first().second.first // 当前方向的极值点
+        for ((_, pos) in palmHistory) {
+            val x = pos.first
+            when (dir) {
+                0 -> when {
+                    x - pivot >= WAVE_SWING_MIN -> { dir = 1; pivot = x }
+                    pivot - x >= WAVE_SWING_MIN -> { dir = -1; pivot = x }
+                }
+                1 -> when {
+                    x >= pivot -> pivot = x
+                    pivot - x >= WAVE_SWING_MIN -> { swings++; dir = -1; pivot = x }
+                }
+                else -> when {
+                    x <= pivot -> pivot = x
+                    x - pivot >= WAVE_SWING_MIN -> { swings++; dir = 1; pivot = x }
+                }
+            }
+        }
+        return swings
+    }
+
+    /** 拳头(确定)是容易误触的动作, 需要更长的持续确认 */
     private fun effectiveThreshold(gesture: Int): Int =
-        if (gesture == GestureId.FIST) maxOf(GestureConfig.confirmFrames, 8)
+        if (gesture == GestureId.FIST) maxOf(GestureConfig.confirmFrames, 6)
         else GestureConfig.confirmFrames
 
     private fun canFire(key: String, interval: Long, now: Long): Boolean {

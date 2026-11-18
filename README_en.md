@@ -5,7 +5,7 @@
 **RK3588 NPU Air-Gesture Control · Android AAR Library + Demo**
 
 Real-time camera gesture recognition on the RK3588 6-TOPS NPU:
-🖱 virtual mouse (cursor / left / right / wheel) · 🔊 volume · 📃 swipe · ⬅️ back · 📸 screenshot
+🖐 4-direction swipe · 👋 wave · ✊ confirm · ✌️ back
 
 中文 | [English](README_en.md)
 
@@ -19,17 +19,16 @@ Real-time camera gesture recognition on the RK3588 6-TOPS NPU:
 
 - **Real-time NPU inference**: MediaPipe-style hand models (palm detection + 21
   landmarks) converted to RKNN fp16 — 30~40 ms per frame, live skeleton overlay
-- **🖱 Mouse mode** (root uinput virtual mouse, system-level pointer):
-  ☝️ fingertip moves cursor · 🤏 pinch = left click (hold to drag) ·
-  ✌️ two fingers = right click · ✌️ hold & move vertically = wheel
-- **Gesture actions**: 👍👎 volume · ✋ vertical swipe · ✌️ back ·
-  ✋open→close grab = screenshot · ✊ raise fist = lock
+- **Focused gesture set**: ✋ open palm swipe = up/down/left/right ·
+  👋 wave arm · ✊ fist = confirm · ✌️ victory = back
+- **Swipe / wave auto separation**: one big displacement then stop = directional
+  swipe; repeated side-to-side oscillation = wave — no false triggers between them
 - **Packaged as an AAR**: four API groups (recognition overlay / start-stop /
   real-time callbacks / action mapping) — integrate with a few lines
 - **Configurable**: every gesture can be remapped or set to
   "recognize only, no action"; global action gap prevents false triggers
-- **root-powered**: uinput virtual mouse, key injection, auto permission
-  grant, boot start
+- **root-powered**: key injection (confirm / back), auto permission grant,
+  boot start
 
 ## 📖 Illustrated Tutorial
 
@@ -65,17 +64,17 @@ Stay 40~60 cm from the lens, palm facing the camera. Default gestures:
 
 | Gesture | Action | Notes |
 |---------|--------|-------|
-| ☝️ index pointing | 🖱 move cursor | smooth fingertip mapping |
-| 🤏 thumb+index pinch | 🖱 left click | quick pinch = click; hold + move = drag |
-| ✌️ two fingers | 🖱 right click / wheel | appear = right click; hold & move = wheel |
-| 👍 / 👎 | volume + / − | repeat while held |
-| ✋ open palm + vertical move | swipe up / down | scrolling, video apps |
-| ✌️ | back | when mouse mode is off |
-| ✋ open → quick close | 📸 screenshot | full fist not required |
-| ✊ raise fist directly | lock / unlock | freezes all gestures |
+| ✋ open palm, swipe up | swipe up | displacement threshold + stop confirmation |
+| ✋ open palm, swipe down | swipe down | scrolling, video apps |
+| ✋ open palm, swipe left | swipe left | page turning |
+| ✋ open palm, swipe right | swipe right | |
+| 👋 side-to-side wave | wave event | callback only by default; remappable via `setAction` |
+| ✊ fist | confirm | focused OK key (requires root) |
+| ✌️ victory | back | accessibility globalBack / root fallback |
 
-> Mappings are toggleable per gesture in the app (off = recognize only),
-> and fully remappable via `setAction` / `setActionHandler`.
+> Swipe and wave never interfere: continuous oscillation is never mistaken for
+> a directional swipe. Mappings are toggleable per gesture in the app
+> (off = recognize only), and fully remappable via `setAction` / `setActionHandler`.
 
 ### Step 5 · Integrate as a Library (optional)
 
@@ -89,7 +88,8 @@ GestureEngine.init(context)
 GestureEngine.startRecognition()
 GestureEngine.showOverlay(true)
 GestureEngine.setOnGestureListener(object : GestureListener { /* realtime */ })
-GestureEngine.setAction(GestureId.THUMB_UP, null)  // recognize only
+GestureEngine.setAction(GestureId.WAVE, null)          // recognize only
+GestureEngine.setAction(GestureId.FIST, GestureAction.BACK)  // remap
 ```
 
 Full API: see the [integration guide](gesturelib/README_API.md) or the demo
@@ -113,12 +113,13 @@ Requires: JDK 17 · Android SDK 34 · NDK 26.3 · CMake 3.22.1
 Camera2 (640×480 YUV) → JNI: YUV→RGB → letterbox 192
   → palm_detection.rknn (NPU) → 2016-anchor decode + NMS
   → rotated ROI → hand_landmark.rknn (NPU 224×224) → 21 landmarks
-  → geometric gesture classification + openness trajectory
-    (grab / swipe / pointing direction)
-  → temporal state machine (confirm frames / cooldown / sequences) → actions
-      ├─ accessibility dispatchGesture (swipe / click)
-      ├─ uinput virtual mouse (cursor / buttons / wheel, root)
-      └─ root input keyevent (D-pad / screenshot / volume fallback)
+  → geometric static-pose classification (palm / fist / victory) + palm trajectory
+  → temporal state machine (confirm frames / cooldown / stop-confirm / reversal count)
+      ├─ directional swipe: displacement threshold + stop confirm, dominant axis
+      │    → accessibility-injected 4-direction screen swipe
+      ├─ wave: X-axis oscillation (≥2 reversals) → event callback
+      ├─ fist confirm: root input keyevent 23 (DPAD_CENTER)
+      └─ victory back: accessibility globalBack / root keyevent 4
 ```
 
 Decode math strictly follows the official MediaPipe sources
@@ -133,4 +134,5 @@ written permission from the author.
 ## 🙏 Credits
 
 [MediaPipe Hands](https://github.com/google-ai-edge/mediapipe) ·
-[airockchip rknn-toolkit2](https://github.com/airockchip/rknn-toolkit2)
+[airockchip rknn-toolkit2](https://github.com/airockchip/rknn-toolkit2) ·
+[PINTO0309 相关研究](https://github.com/PINTO0309)

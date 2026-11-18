@@ -5,7 +5,7 @@
 **RK3588 NPU 隔空手势控制 · Android AAR 库 + Demo**
 
 使用 RK3588 的 6 TOPS NPU 实时识别摄像头手势：
-🖱 虚拟鼠标（光标/左键/右键/滚轮）· 🔊 音量 · 📃 上滑下滑 · ⬅️ 返回 · 📸 截图
+🖐 4 方向滑动 · 👋 挥手 · ✊ 确定 · ✌️ 返回
 
 [English](README_en.md) | 中文
 
@@ -19,13 +19,12 @@
 
 - **NPU 实时推理**：MediaPipe 手部模型（掌检测 + 21 关键点）转 RKNN fp16，
   单帧 30~40ms，悬浮识别框实时显示骨架
-- **🖱 鼠标模式**（root uinput 虚拟鼠标，系统级光标）：
-  ☝️ 指尖移动光标 · 🤏 捏合左键（按住拖拽）· ✌️ 右键 · ✌️ 按住挥动滚轮
-- **手势动作集**：👍👎 音量 · ✋ 挥动上滑下滑 · ✌️ 返回 · ✋→✊ 抓取截图 · ✊ 举拳锁定
+- **精选手势集**：✋ 张掌挥动 = 上/下/左/右滑动 · 👋 挥动手臂 · ✊ 拳头 = 确定 · ✌️ 剪刀手 = 返回
+- **滑动/挥手自动区分**：单次大幅位移后停住 = 方向滑动；左右往复摆动 = 挥手，互不误触
 - **封装为 AAR 库**：四类 API（悬浮识别框 / 启停识别 / 实时回调 / 动作映射），
   一行代码集成到任何 App
 - **可配置**：每个手势可单独设为「只识别不动作」或重映射；全局动作间隔防误触
-- **root 增强**：uinput 虚拟鼠标、按键注入、无障碍/权限自动授权、开机自启
+- **root 增强**：按键注入（确定/返回）、无障碍/权限自动授权、开机自启
 
 ## 📖 图文使用教程
 
@@ -59,15 +58,15 @@ adb install -r app-debug.apk
 
 | 手势 | 功能 | 说明 |
 |------|------|------|
-| ☝️ 食指指向 | 🖱 移动光标 | 指尖平滑映射全屏 |
-| 🤏 拇指食指捏合 | 🖱 左键 | 快速捏合=单击；捏住移动=拖拽 |
-| ✌️ 两指 | 🖱 右键 / 滚轮 | 张开瞬间=右键；按住上下挥=滚轮 |
-| 👍 / 👎 | 音量 + / − | 按住连击 |
-| ✋ 张掌上下挥 | 上滑 / 下滑 | 刷视频、滚动列表 |
-| ✌️ | 返回 | 鼠标模式关闭时 |
-| ✋张开 → 快速收拢 | 📸 截图 | 无需完全握拳 |
-| ✊ 直接举拳 | 锁定 / 解锁 | 冻结全部手势 |
+| ✋ 张掌向上挥 | 向上滑动 | 位移超阈值 + 停住即触发 |
+| ✋ 张掌向下挥 | 向下滑动 | 刷视频、滚动列表 |
+| ✋ 张掌向左挥 | 向左滑动 | 左右翻页 |
+| ✋ 张掌向右挥 | 向右滑动 | |
+| 👋 左右往复摆动 | 挥手事件 | 只回调不动作，`setAction` 可重映射 |
+| ✊ 拳头 | 确定 | 焦点 OK 键（需 root） |
+| ✌️ 剪刀手 | 返回 | 无障碍 globalBack / root 兜底 |
 
+> 滑动与挥手互不干扰：持续摆动永远不会误触方向滑动；
 > 手势映射可在 App 内逐项开关（关 = 只识别不动作），
 > 库集成方可用 `setAction` / `setActionHandler` 任意重映射。
 
@@ -82,7 +81,8 @@ GestureEngine.init(context)
 GestureEngine.startRecognition()
 GestureEngine.showOverlay(true)
 GestureEngine.setOnGestureListener(object : GestureListener { /* 实时回调 */ })
-GestureEngine.setAction(GestureId.THUMB_UP, null)  // 只识别不动作
+GestureEngine.setAction(GestureId.WAVE, null)          // 只识别不动作
+GestureEngine.setAction(GestureId.FIST, GestureAction.BACK)  // 重映射动作
 ```
 
 完整 API 见 [INTEGRATION 文档](gesturelib/README_API.md) 或 demo 源码 `app/`。
@@ -104,11 +104,12 @@ cd rk3588-air-gesture
 Camera2 (640×480 YUV) → JNI: YUV→RGB → letterbox 192
   → palm_detection.rknn (NPU) → 2016 anchors 解码 + NMS
   → 旋转 ROI → hand_landmark.rknn (NPU 224×224) → 21 关键点
-  → 手势几何分类 + 张开度轨迹 (抓取/滑动/点指方向)
-  → 时序状态机 (确认帧/冷却/序列) → 动作执行
-      ├─ 无障碍 dispatchGesture (滑动/点击)
-      ├─ uinput 虚拟鼠标 (光标/左右键/滚轮, root)
-      └─ root input keyevent (方向键/截图/音量兜底)
+  → 几何分类静态姿势 (张掌/拳头/剪刀手) + 掌心轨迹
+  → 时序状态机 (确认帧/冷却/停止确认/折返计数)
+      ├─ 方向滑动: 位移超阈值 + 停止确认, 主轴判定 → 无障碍注入 4 方向滑动
+      ├─ 挥手: X 轴往复摆动 (折返 ≥2 次) → 事件回调
+      ├─ 拳头确定: root input keyevent 23 (DPAD_CENTER)
+      └─ 剪刀手返回: 无障碍 globalBack / root keyevent 4
 ```
 
 解码数学严格对齐 MediaPipe 官方源码（SSD anchors / box decode / ROI 变换）。

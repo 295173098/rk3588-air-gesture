@@ -183,45 +183,19 @@
                     android:layout_height="wrap_content" />
 
                 <Switch
-                    android:id="@+id/sw_thumb_up"
-                    style="@style/SwitchRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-
-                <Switch
-                    android:id="@+id/sw_thumb_down"
-                    style="@style/SwitchRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-
-                <Switch
                     android:id="@+id/sw_victory"
                     style="@style/SwitchRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content" />
 
                 <Switch
-                    android:id="@+id/sw_point"
+                    android:id="@+id/sw_fist"
                     style="@style/SwitchRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content" />
 
                 <Switch
-                    android:id="@+id/sw_grab"
-                    style="@style/SwitchRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="✋→✊ 抓取 = 截图" />
-
-                <Switch
-                    android:id="@+id/sw_mouse"
-                    style="@style/SwitchRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="🖱 鼠标模式（☝️光标 🤏左键 ✌️右键/滚轮）" />
-
-                <Switch
-                    android:id="@+id/sw_fist"
+                    android:id="@+id/sw_wave"
                     style="@style/SwitchRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content" />

@@ -40,7 +40,6 @@ class GestureService : Service() {
         GestureEngine.dispatchAction(action, gesture, dir)
     }
     private val out = RknnBridge.allocOut()
-    private val mouse: MouseController by lazy { MouseController(this) }
     private val busy = AtomicBoolean(false)
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -94,7 +93,6 @@ class GestureService : Service() {
         }
         Log.i(TAG, "rknn init ok")
         RknnBridge.setFlipH(GestureConfig.flipH)
-        if (GestureConfig.mouseMode) mouse.ensureSetup()
 
         running = true
         sm.reset()
@@ -142,39 +140,22 @@ class GestureService : Service() {
                 Log.e(TAG, "推理错误 rc=$rc")
             } else {
                 val gesture = out[RknnBridge.OUT_GESTURE].toInt()
-                val dir = out[RknnBridge.OUT_DIR].toInt()
                 val palmValid = out[RknnBridge.OUT_PALM_VALID] > 0.5f
-                val palmY = if (palmValid) out[RknnBridge.OUT_PALM_Y] else null
-                // 张开度: 置信度不足时传 -1 (历史清空)
-                val openness = if (out[RknnBridge.OUT_SCORE] > 0.65f)
-                    out[RknnBridge.OUT_OPEN].toInt() else -1
+                val palmX = out[RknnBridge.OUT_PALM_X]
+                val palmY = out[RknnBridge.OUT_PALM_Y]
                 val now = SystemClock.uptimeMillis()
-                sm.update(gesture, dir, palmY, openness, now)
+                sm.update(gesture, palmValid, palmX, palmY, now)
 
                 val frameMs = out[RknnBridge.OUT_MS]
                 RecognitionState.update(out)
-
-                // 鼠标模式: 光标/左右键/滚轮 (锁定时不响应)
-                if (GestureConfig.mouseMode && !sm.locked) {
-                    val lmValid = out[RknnBridge.OUT_SCORE] > 0.65f
-                    var lm: FloatArray? = null
-                    if (lmValid) {
-                        lm = FloatArray(63)
-                        System.arraycopy(out, RknnBridge.OUT_LM, lm, 0, 63)
-                    }
-                    mouse.onFrame(lm, gesture, now)
-                } else {
-                    mouse.onFrame(null, gesture, now)
-                }
 
                 // 3. 实时回调
                 GestureEngine.listener?.let { l ->
                     val lm = FloatArray(63)
                     System.arraycopy(out, RknnBridge.OUT_LM, lm, 0, 63)
                     l.onFrame(FrameResult(
-                        gesture, dir, out[RknnBridge.OUT_SCORE],
-                        palmValid,
-                        out[RknnBridge.OUT_PALM_X], out[RknnBridge.OUT_PALM_Y],
+                        gesture, out[RknnBridge.OUT_SCORE],
+                        palmValid, palmX, palmY,
                         out[RknnBridge.OUT_PALM_W], out[RknnBridge.OUT_PALM_H],
                         lm, frameMs
                     ))
@@ -183,11 +164,8 @@ class GestureService : Service() {
                 // 1. 悬浮识别框刷新
                 if (overlay.isShown) {
                     overlay.onFrame()
-                    val name = if (gesture == GestureId.POINT && dir > 0)
-                        "☝️" + GestureId.dirNames.getOrElse(dir) { "" }
-                    else GestureId.names.getOrElse(gesture) { "?" }
-                    overlay.setStatus(String.format(
-                        "%s  %.0fms%s", name, frameMs, if (sm.locked) " 🔒" else ""))
+                    val name = GestureId.names.getOrElse(gesture) { "?" }
+                    overlay.setStatus(String.format("%s  %.0fms", name, frameMs))
                 }
             }
         } catch (e: Exception) {

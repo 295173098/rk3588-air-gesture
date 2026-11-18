@@ -9,16 +9,6 @@ import android.content.SharedPreferences
 object GestureConfig {
     private lateinit var sp: SharedPreferences
 
-    const val ACTION_NONE = "none"
-    const val ACTION_VOL_UP = "vol_up"
-    const val ACTION_VOL_DOWN = "vol_down"
-    const val ACTION_SWIPE_UP = "swipe_up"
-    const val ACTION_SWIPE_DOWN = "swipe_down"
-    const val ACTION_BACK = "back"
-    const val ACTION_HOME = "home"
-    const val ACTION_CLICK = "click"
-    const val ACTION_LOCK = "lock"
-
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("gesture_cfg", Context.MODE_PRIVATE)
     }
@@ -56,43 +46,25 @@ object GestureConfig {
         get() = get("boot_start", false)
         set(v) = set("boot_start", v)
 
-    var volumeRepeat: Boolean
-        get() = get("volume_repeat", true)
-        set(v) = set("volume_repeat", v)
-
     // ---- 手势开关 ----
-    var enableThumbUp: Boolean
-        get() = get("en_thumb_up", true); set(v) = set("en_thumb_up", v)
-    var enableThumbDown: Boolean
-        get() = get("en_thumb_down", true); set(v) = set("en_thumb_down", v)
+    /** ✋ 张掌挥动 = 4 方向滑动 */
     var enableSwipe: Boolean
         get() = get("en_swipe", true); set(v) = set("en_swipe", v)
+
+    /** ✌️ 剪刀手 = 返回 */
     var enableVictory: Boolean
         get() = get("en_victory", true); set(v) = set("en_victory", v)
-    var enablePoint: Boolean
-        get() = get("en_point", false); set(v) = set("en_point", v)
+
+    /** ✊ 拳头 = 确定 */
     var enableFist: Boolean
         get() = get("en_fist", true); set(v) = set("en_fist", v)
 
-    /** ☝️ 指向 = 方向键 (D-pad) */
-    var enableDpad: Boolean
-        get() = get("en_dpad", true); set(v) = set("en_dpad", v)
-
-    /** ✋张开→✊抓取 = 截图 */
-    var enableGrab: Boolean
-        get() = get("en_grab", true); set(v) = set("en_grab", v)
-
-    /** 鼠标模式: ☝️=光标 🤏=左键 ✌️=右键+滚轮 (开启后替代方向键/✌️返回) */
-    var mouseMode: Boolean
-        get() = get("mouse_mode", true); set(v) = set("mouse_mode", v)
-
-    /** 方向键连发间隔 ms */
-    var dpadRepeatMs: Int
-        get() = get("dpad_repeat_ms", 400)
-        set(v) = set("dpad_repeat_ms", v)
+    /** 👋 挥动手臂 (默认只回调不动作) */
+    var enableWave: Boolean
+        get() = get("en_wave", true); set(v) = set("en_wave", v)
 
     // ---- 灵敏度/阈值 ----
-    /** 滑动触发位移阈值 (帧高比例) 0.10~0.35, 越小越灵敏 */
+    /** 滑动触发位移阈值 (归一化画面比例) 0.10~0.35, 越小越灵敏 */
     var swipeThreshold: Float
         get() = get("swipe_threshold", 0.16f)
         set(v) = set("swipe_threshold", v)
@@ -112,11 +84,6 @@ object GestureConfig {
         get() = get("action_gap_ms", 3000)
         set(v) = set("action_gap_ms", v)
 
-    /** 音量连击间隔 ms */
-    var volumeRepeatMs: Int
-        get() = get("volume_repeat_ms", 450)
-        set(v) = set("volume_repeat_ms", v)
-
     // ---- 手势动作启用 (按手势 id, 持久化) ----
 
     fun setEnabled(gesture: Int, enabled: Boolean) {
@@ -124,9 +91,7 @@ object GestureConfig {
             GestureId.PALM -> "en_swipe"
             GestureId.FIST -> "en_fist"
             GestureId.VICTORY -> "en_victory"
-            GestureId.POINT -> "en_dpad"
-            GestureId.THUMB_UP -> "en_thumb_up"
-            GestureId.THUMB_DOWN -> "en_thumb_down"
+            GestureId.WAVE -> "en_wave"
             else -> return
         }
         set(key, enabled)
@@ -136,9 +101,7 @@ object GestureConfig {
         GestureId.PALM -> enableSwipe
         GestureId.FIST -> enableFist
         GestureId.VICTORY -> enableVictory
-        GestureId.POINT -> enableDpad
-        GestureId.THUMB_UP -> enableThumbUp
-        GestureId.THUMB_DOWN -> enableThumbDown
+        GestureId.WAVE -> enableWave
         else -> true
     }
 }

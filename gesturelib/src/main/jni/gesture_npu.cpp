@@ -66,13 +66,13 @@ static constexpr int OUT_PALM_Y = 6;
 static constexpr int OUT_PALM_W = 7;
 static constexpr int OUT_PALM_H = 8;
 static constexpr int OUT_LM = 9;                // 21*3, image-normalized x,y
-static constexpr int OUT_DIR = 72;              // 点指方向: 0无 1上 2下 3左 4右
+static constexpr int OUT_DIR = 72;              // 保留偏移(恒 0, 滑动方向由 Kotlin 状态机计算)
 static constexpr int OUT_OPEN = 73;             // 张开度: 伸直手指数(含拇指) 0..5
 
 // 手势枚举 (与 Kotlin GestureId 一致)
+// WAVE(挥动手臂) 是时序动作, 由 Kotlin 状态机检测, 不在此分类
 enum Gesture {
-    G_NONE = 0, G_PALM = 1, G_FIST = 2, G_VICTORY = 3,
-    G_POINT = 4, G_THUMB_UP = 5, G_THUMB_DOWN = 6
+    G_NONE = 0, G_PALM = 1, G_FIST = 2, G_VICTORY = 3
 };
 
 // MediaPipe 21 关键点索引
@@ -419,9 +419,9 @@ static inline void roi_local_to_img(float lx, float ly, float cx, float cy,
 // ---------------------------------------------------------------------------
 static int classify_gesture(const float* lm, int* openCnt) { // image-normalized 21*3
     auto px = [&](int i) { return lm[3 * i + 0] * g_img_w; };
-    auto py = [&](int i) { return lm[3 * i + 1] * g_img_h; };
     auto dist = [&](int a, int b) {
-        float dx = px(a) - px(b), dy = py(a) - py(b);
+        float dx = px(a) - px(b);
+        float dy = lm[3 * a + 1] * g_img_h - lm[3 * b + 1] * g_img_h;
         return std::sqrt(dx * dx + dy * dy);
     };
     float palm = dist(L_WRIST, L_MID_MCP);
@@ -442,16 +442,8 @@ static int classify_gesture(const float* lm, int* openCnt) { // image-normalized
     if (openCnt) *openCnt = four + (thm ? 1 : 0);
 
     if (four == 4) return G_PALM;
-    if (four == 0) {
-        if (!thm) return G_FIST;
-        // 只有拇指伸出: 依据指尖相对手腕的上下位置判断
-        float dy = py(L_THUMB_TIP) - py(L_WRIST);
-        if (dy < -palm * 0.45f) return G_THUMB_UP;
-        if (dy > palm * 0.45f) return G_THUMB_DOWN;
-        return G_NONE;
-    }
+    if (four == 0 && !thm) return G_FIST;
     if (idx && mid && !rng && !pky) return G_VICTORY;
-    if (idx && !mid && !rng && !pky) return G_POINT;
     return G_NONE;
 }
 
@@ -700,25 +692,9 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
     }
 
     // 6. 手势分类 (置信度不足时不输出手势)
+    //    滑动方向/挥手由 Kotlin 状态机基于掌心轨迹做时序检测, 此处只分类静态姿势
     int openCnt = 0;
     int gesture = (score > 0.65f) ? classify_gesture(lm, &openCnt) : G_NONE;
-
-    // 6.5 点指方向: 食指指向 (手腕->食指尖, 像素空间) 按 45° 象限划分
-    int dir = 0;
-    if (gesture == G_POINT) {
-        float vx = (lm[3 * L_INDEX_TIP + 0] - lm[3 * L_WRIST + 0]) * g_img_w;
-        float vy = (lm[3 * L_INDEX_TIP + 1] - lm[3 * L_WRIST + 1]) * g_img_h;
-        float ang = std::atan2(-vy, vx); // 数学角, 0=右, 逆时针为正
-        if (ang > (float)M_PI / 4 && ang < 3 * (float)M_PI / 4) dir = 1;          // 上
-        else if (ang < -(float)M_PI / 4 && ang > -3 * (float)M_PI / 4) dir = 2;   // 下
-        else if (std::abs(ang) >= 3 * (float)M_PI / 4) dir = 3;                   // 左
-        else dir = 4;                                                             // 右
-        // 非镜像画面 (相机面对用户): 图像左右与用户视角相反, 互换左右方向
-        // 使"指哪打哪"; 镜像画面 (flip 开启) 则无需互换
-        if (!g_flip_h) {
-            if (dir == 3) dir = 4; else if (dir == 4) dir = 3;
-        }
-    }
 
     // 输出
     auto t1 = std::chrono::steady_clock::now();
@@ -729,8 +705,8 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
     // 心跳日志 (每 60 帧)
     static int hb = 0;
     if (++hb % 60 == 1) {
-        LOGI("hb gesture=%d dir=%d score=%.2f palm=%.2f,%.2f w=%.2f ms=%.1f",
-             gesture, dir, score, palm_x, palm_y, palm_w, ms);
+        LOGI("hb gesture=%d score=%.2f palm=%.2f,%.2f w=%.2f ms=%.1f",
+             gesture, score, palm_x, palm_y, palm_w, ms);
     }
 
     out[OUT_MS] = ms;
@@ -742,7 +718,6 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
     out[OUT_PALM_Y] = palm_y;
     out[OUT_PALM_W] = palm_w;
     out[OUT_PALM_H] = palm_h;
-    out[OUT_DIR] = (float)dir;
     out[OUT_OPEN] = (float)openCnt;
     memcpy(out + OUT_LM, lm, sizeof(lm));
     return 0;
