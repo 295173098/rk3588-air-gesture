@@ -18,14 +18,6 @@
             </intent-filter>
         </activity>
 
-        <!-- 开机自启 (GestureConfig.bootStart 开启时生效) -->
-        <receiver
-            android:name=".BootReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
     </application>
 
 </manifest>
