@@ -152,56 +152,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 权限 -->
-        <com.google.android.material.card.MaterialCardView
-            style="@style/Card"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="权限"
-                    android:textColor="#999999"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/row_camera"
-                    style="@style/PermRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="相机权限" />
-
-                <TextView
-                    android:id="@+id/row_overlay"
-                    style="@style/PermRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="悬浮窗权限" />
-
-                <TextView
-                    android:id="@+id/row_access"
-                    style="@style/PermRow"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="无障碍服务" />
-
-                <Button
-                    android:id="@+id/btn_root_grant"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="一键 Root 授权" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
         <!-- 手势→动作映射 -->
         <com.google.android.material.card.MaterialCardView
             style="@style/Card"

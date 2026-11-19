@@ -23,9 +23,8 @@ public class StartActivity extends FragmentActivity {
     protected void onCreate(Bundle paramBundle) {
         super.onCreate(paramBundle);
         setContentView(R.layout.activity_start);
-
+        checkVideoPermission();
     }
-
 
     public void checkVideoPermission() {
         List<PermissionBean> list = new ArrayList<>();
@@ -33,6 +32,8 @@ public class StartActivity extends FragmentActivity {
             list.add(new PermissionBean(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION));
         }
         list.add(new PermissionBean(Settings.ACTION_MANAGE_OVERLAY_PERMISSION));
+        list.add(new PermissionBean(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             list.add(new PermissionBean(Manifest.permission.READ_MEDIA_AUDIO));
             list.add(new PermissionBean(Manifest.permission.READ_MEDIA_IMAGES));

@@ -1,15 +1,11 @@
 package com.rk3588.airgesture
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -21,8 +17,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import com.rk3588.gesturelib.CameraController
 import com.rk3588.gesturelib.FrameDetection
 import com.rk3588.gesturelib.FrameResult
@@ -33,7 +27,6 @@ import com.rk3588.gesturelib.GestureId
 import com.rk3588.gesturelib.GestureListener
 import com.rk3588.gesturelib.OverlayView
 import com.rk3588.gesturelib.RknnBridge
-import com.rk3588.gesturelib.RootShell
 
 /**
  * Demo: 演示 gesturelib 的五类 API
@@ -69,9 +62,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLog: TextView
     private lateinit var btnToggle: Button
     private lateinit var btnOverlay: Button
-    private lateinit var rowCamera: TextView
-    private lateinit var rowOverlay: TextView
-    private lateinit var rowAccess: TextView
     private lateinit var sbGap: SeekBar
     private lateinit var lblGap: TextView
     private lateinit var ivFrame: ImageView
@@ -137,9 +127,6 @@ class MainActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tv_log)
         btnToggle = findViewById(R.id.btn_toggle)
         btnOverlay = findViewById(R.id.btn_overlay)
-        rowCamera = findViewById(R.id.row_camera)
-        rowOverlay = findViewById(R.id.row_overlay)
-        rowAccess = findViewById(R.id.row_access)
         sbGap = findViewById(R.id.sb_gap)
         lblGap = findViewById(R.id.lbl_gap)
         ivFrame = findViewById(R.id.iv_frame)
@@ -172,10 +159,6 @@ class MainActivity : AppCompatActivity() {
             if (GestureEngine.isRunning) {
                 GestureEngine.stopRecognition()
             } else {
-                if (!hasCamera()) {
-                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
-                    return@setOnClickListener
-                }
                 GestureEngine.startRecognition()
             }
             ui.postDelayed({ refreshStatus() }, 600)
@@ -203,28 +186,6 @@ class MainActivity : AppCompatActivity() {
         //     android.util.Log.i("Demo", "自定义处理 $action gesture=$gesture dir=$dir")
         //     true
         // })
-
-        // 权限
-        findViewById<Button>(R.id.btn_root_grant).setOnClickListener {
-            Thread {
-                if (RootShell.hasRoot()) {
-                    RootShell.autoGrant(packageName)
-                    ui.post { Toast.makeText(this, "root 授权完成", Toast.LENGTH_SHORT).show() }
-                } else {
-                    ui.post { Toast.makeText(this, "未获取 root", Toast.LENGTH_SHORT).show() }
-                }
-            }.start()
-        }
-        rowCamera.setOnClickListener {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 1)
-        }
-        rowOverlay.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")))
-        }
-        rowAccess.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
 
         // 动作间隔
         sbGap.max = 6000
@@ -320,19 +281,11 @@ class MainActivity : AppCompatActivity() {
         null
     }
 
-    private fun hasCamera(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-
     private fun refreshStatus() {
         val running = GestureEngine.isRunning
         tvStatus.text = if (running) "识别运行中" else "识别已停止"
         tvStatus.setTextColor(if (running) 0xFF4CAF50.toInt() else 0xFFE53935.toInt())
         btnToggle.text = if (running) "停止识别" else "开始识别"
-
-        rowCamera.text = "相机权限 ${if (hasCamera()) "✓" else "✗"}"
-        rowOverlay.text = "悬浮窗权限 ${if (Settings.canDrawOverlays(this)) "✓" else "✗"}"
-        rowAccess.text = "无障碍服务 ${if (com.rk3588.gesturelib.GestureAccessibility.isConnected()) "✓" else "✗"}"
 
         tvLive.text = String.format("手势: %s   %.0f ms   %.1f fps",
             lastGestureName, lastFrameMs, if (lastFrameMs > 0) 1000f / lastFrameMs else 0f)
