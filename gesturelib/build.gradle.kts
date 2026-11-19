@@ -66,13 +66,13 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
-// 发布坐标: com.rk3588:gesturelib:1.1.0
+// 发布坐标: com.rk3588:gesturelib:1.2.0
 publishing {
     publications {
         create<MavenPublication>("release") {
             groupId = "com.rk3588"
             artifactId = "gesturelib"
-            version = "1.1.0"
+            version = "1.2.0"
             afterEvaluate { from(components["release"]) }
         }
     }

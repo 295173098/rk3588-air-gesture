@@ -1,4 +1,4 @@
-# gesturelib 1.1.0 — RK3588 NPU 隔空手势识别库 · 集成文档
+# gesturelib 1.2.0 — RK3588 NPU 隔空手势识别库 · 集成文档
 
 NPU 手势识别 + 动作注入，封装为单个 AAR（含 RKNN 运行时与模型，无需额外依赖）。
 
@@ -29,7 +29,7 @@ dependencies {
 或使用 Maven 坐标（已发布到接入方本机 mavenLocal 的话）：
 
 ```kotlin
-implementation("com.rk3588:gesturelib:1.1.0")
+implementation("com.rk3588:gesturelib:1.2.0")
 ```
 
 **2. 初始化并启动**
@@ -52,7 +52,7 @@ GestureEngine.startRecognition()
 Thread { RootShell.autoGrant(packageName) }.start()
 ```
 
-## 三、API（四类能力）
+## 三、API（五类能力）
 
 ### 1. 悬浮识别框
 
@@ -105,6 +105,57 @@ GestureEngine.setActionHandler { action, gesture, dir ->
 }
 GestureEngine.resetActions()  // 恢复默认
 ```
+
+### 5. 算法帧输入（图片 / 外部帧）
+
+不接相机也能用：把外部帧直接送入同一套 NPU 管线，结果通过回调返回。
+
+```kotlin
+// 单帧分析（异步，回调在后台线程；result = null 表示推理失败）
+GestureEngine.analyzeImage(bitmap) { result ->
+    if (result != null && result.hasHand) {
+        Log.i("Demo", "${result.gestureName} ${result.score} ${result.inferenceMs}ms")
+        val lm = result.landmarks   // 21×3 归一化坐标
+    }
+}
+
+// 同步版（勿在主线程调用）
+val result: FrameDetection? = GestureEngine.analyzeImage(bitmap)
+```
+
+`FrameDetection` 字段：
+
+| 字段 | 说明 |
+|------|------|
+| `hasHand` | 本帧是否检测到手 |
+| `gesture` / `gestureName` | 静态手势 id / 名称 |
+| `score` | landmark 置信度 0..1 |
+| `handedness` | 左右手分数 |
+| `openFingers` | 伸直手指数 0..5 |
+| `palmX/Y/W/H` | 掌心框（图像归一化） |
+| `landmarks` | 21×3 关键点（x,y,z 归一化），`landmark(i)` 取单点 |
+| `inferenceMs` | 单帧 NPU 耗时 |
+
+连续帧输入（视频流 / 其他相机 / 算法前处理结果）：
+
+```kotlin
+GestureEngine.startFrameInput()          // 不打开相机; 与 startRecognition 互斥
+GestureEngine.pushFrame(bitmap)          // 每帧调用; 上一帧未处理完时自动丢帧
+GestureEngine.pushYuvFrame(y, u, v, width, height,
+    yStride, uStride, vStride, uPixelStride, vPixelStride)
+GestureEngine.stopFrameInput()
+GestureEngine.isFrameInputActive
+```
+
+- 连续帧模式与相机识别同构：复用完整时序状态机，`onFrame` /
+  `onGestureTriggered` 照常回调，动作映射同样生效
+- 单帧分析不经过状态机、不触发动作；每次分析都会重置跟踪 ROI，强制重新做掌检测
+- NPU 模型按需加载，无需先 `startRecognition()`
+- 相机帧与算法帧共用同一套 RKNN 上下文（JNI 内串行化）；
+  `startRecognition()` 会自动退出外部帧模式
+- `pushFrame` 的 bitmap 在回调前不要 recycle；`pushYuvFrame` 的 ByteBuffer
+  必须是 direct buffer 且在回调前保持有效
+- 输入尺寸不限（内部 letterbox），坐标按输入帧宽高归一化
 
 ## 四、手势集与默认动作
 
@@ -175,4 +226,6 @@ GestureEngine.bootStart      // 开机自启标记 (配合 BOOT_COMPLETED)
 | 拳头确定无反应 | 确定键走 root `input keyevent 23`，确认设备已 root |
 | NPU 初始化失败 rc=-11/-13 | AAR 内模型缺失（完整 AAR 不会出现）；或设备无 RKNPU 驱动 |
 | 误触发多 | 调大 `actionGapMs` / `confirmFrames` / `swipeThreshold`；光线充足时置信度显著提升 |
-| 状态机日志 | `adb logcat -s GestureNPU GestureService GestureSM GestureEngine` |
+| `analyzeImage` 回调 null / 未检测到手 | ① 设备无 RKNPU 驱动或模型缺失 ② 图片中手部过小/过暗 ③ 位图非 RGBA_8888（库会自动转一份） |
+| 外部帧模式启动失败 | 相机识别正在运行 —— 先 `stopRecognition()`；两种帧源互斥 |
+| 状态机日志 | `adb logcat -s GestureNPU GestureService GestureSM GestureFrameInput` |

@@ -149,19 +149,9 @@ class GestureService : Service() {
                 sm.update(gesture, palmValid, palmX, palmY, now)
 
                 val frameMs = out[RknnBridge.OUT_MS]
-                RecognitionState.update(out)
 
-                // 3. 实时回调
-                GestureEngine.listener?.let { l ->
-                    val lm = FloatArray(63)
-                    System.arraycopy(out, RknnBridge.OUT_LM, lm, 0, 63)
-                    l.onFrame(FrameResult(
-                        gesture, out[RknnBridge.OUT_SCORE],
-                        palmValid, palmX, palmY,
-                        out[RknnBridge.OUT_PALM_W], out[RknnBridge.OUT_PALM_H],
-                        lm, frameMs
-                    ))
-                }
+                // 3. 实时回调 + 最新快照 (与外部帧模式共用同一出口)
+                GestureEngine.notifyFrame(out)
 
                 // 1. 悬浮识别框刷新
                 if (overlay.isShown) {

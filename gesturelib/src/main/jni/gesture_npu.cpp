@@ -125,7 +125,8 @@ struct Anchor { float cx, cy, w, h; };
 static std::vector<Anchor> g_anchors;
 
 // 工作缓冲
-static std::vector<uint8_t> g_rgb;      // imgW*imgH*3
+static std::vector<uint8_t> g_rgb;      // imgW*imgH*3 (相机帧)
+static std::vector<uint8_t> g_ext_rgb;  // 算法帧 RGB888 (Bitmap/外部帧, 复用避免每帧分配)
 static std::vector<float> g_palm_in;    // 192*192*3
 static std::vector<float> g_lm_in;      // 224*224*3
 static float g_fps_ema = 0;
@@ -138,6 +139,10 @@ static bool g_flip_h = false;
 static jobject g_preview_bitmaps[2] = {nullptr, nullptr};
 static std::atomic<int> g_preview_front{0};
 static std::mutex g_preview_mutex;
+
+// 推理管线互斥: 相机线程与算法帧线程 (Bitmap/外部帧) 可能并发调用同一套
+// RKNN 上下文与跟踪状态, 必须串行化。
+static std::mutex g_infer_mutex;
 
 // ---------------------------------------------------------------------------
 // anchors: 严格复刻 mediapipe ssd_anchors_calculator.cc GenerateAnchors()
@@ -538,55 +543,52 @@ static bool run_model(ModelCtx& m, std::vector<std::vector<float>>& outs) {
 // ---------------------------------------------------------------------------
 // 单帧处理
 // ---------------------------------------------------------------------------
-static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const uint8_t* v,
-                         int w, int h,
-                         int yStride, int uStride, int vStride,
-                         int uPix, int vPix,
-                         float* out) {
+
+// 相机预览位图更新 (双缓冲): 写后台缓冲后原子切换 front
+static void update_preview_bitmap(JNIEnv* env, int w, int h) {
+    if (!g_preview_bitmaps[0]) return;
+    std::lock_guard<std::mutex> lk(g_preview_mutex);
+    int back = 1 - g_preview_front.load(std::memory_order_relaxed);
+    jobject bmp = g_preview_bitmaps[back];
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, bmp, &info) >= 0
+        && info.width == (uint32_t)w && info.height == (uint32_t)h
+        && info.format == ANDROID_BITMAP_FORMAT_RGBA_8888) {
+        void* pixels = nullptr;
+        if (AndroidBitmap_lockPixels(env, bmp, &pixels) >= 0 && pixels) {
+            auto* dst = (uint8_t*)pixels;
+            for (int yy = 0; yy < h; ++yy) {
+                const uint8_t* srcRow = g_rgb.data() + (size_t)yy * w * 3;
+                uint8_t* dstRow = dst + (size_t)yy * info.stride;
+                for (int xx = 0; xx < w; ++xx) {
+                    dstRow[xx * 4 + 0] = srcRow[xx * 3 + 0];
+                    dstRow[xx * 4 + 1] = srcRow[xx * 3 + 1];
+                    dstRow[xx * 4 + 2] = srcRow[xx * 3 + 2];
+                    dstRow[xx * 4 + 3] = 255;
+                }
+            }
+            AndroidBitmap_unlockPixels(env, bmp);
+            g_preview_front.store(back, std::memory_order_release);
+        }
+    }
+}
+
+// RGB888 输入核心: palm -> landmark -> 静态手势分类。
+// 相机帧与算法帧 (Bitmap / 外部 YUV) 共用; 调用方须持有 g_infer_mutex。
+// reset_track=true 用于单张图片分析: 丢弃上一帧跟踪 ROI, 强制重新做 palm 检测。
+static int process_rgb(const uint8_t* rgb, int w, int h, float* out, bool reset_track) {
     auto t0 = std::chrono::steady_clock::now();
     memset(out, 0, OUT_SIZE * sizeof(float));
 
     if (g_img_w != w || g_img_h != h) {
         g_img_w = w; g_img_h = h;
-        g_rgb.resize((size_t)w * h * 3);
+        g_track = TrackRoi{};
+    } else if (reset_track) {
         g_track = TrackRoi{};
     }
 
-    // 1. YUV -> RGB (+ 可选水平翻转, 与预览显示保持一致)
-    yuv420_to_rgb(y, u, v, w, h, yStride, uStride, vStride, uPix, vPix, g_rgb.data());
-    if (g_flip_h) flip_rgb_horizontal(g_rgb.data(), w, h);
-
-    // 预览位图每帧更新（与识别坐标同源，构造上对齐；放在一切提前 return 之前）
-    // 写后台缓冲, 写完原子切换 front（互斥锁与 UI 快照拷贝共用）
-    if (g_preview_bitmaps[0]) {
-        std::lock_guard<std::mutex> lk(g_preview_mutex);
-        int back = 1 - g_preview_front.load(std::memory_order_relaxed);
-        jobject bmp = g_preview_bitmaps[back];
-        AndroidBitmapInfo info;
-        if (AndroidBitmap_getInfo(env, bmp, &info) >= 0
-            && info.width == (uint32_t)w && info.height == (uint32_t)h
-            && info.format == ANDROID_BITMAP_FORMAT_RGBA_8888) {
-            void* pixels = nullptr;
-            if (AndroidBitmap_lockPixels(env, bmp, &pixels) >= 0 && pixels) {
-                auto* dst = (uint8_t*)pixels;
-                for (int yy = 0; yy < h; ++yy) {
-                    const uint8_t* srcRow = g_rgb.data() + (size_t)yy * w * 3;
-                    uint8_t* dstRow = dst + (size_t)yy * info.stride;
-                    for (int xx = 0; xx < w; ++xx) {
-                        dstRow[xx * 4 + 0] = srcRow[xx * 3 + 0];
-                        dstRow[xx * 4 + 1] = srcRow[xx * 3 + 1];
-                        dstRow[xx * 4 + 2] = srcRow[xx * 3 + 2];
-                        dstRow[xx * 4 + 3] = 255;
-                    }
-                }
-                AndroidBitmap_unlockPixels(env, bmp);
-                g_preview_front.store(back, std::memory_order_release);
-            }
-        }
-    }
-
-    // 2. palm detection
-    letterbox_rgb(g_rgb.data(), w, h, g_palm.in_w, g_palm_in);
+    // 1. palm detection
+    letterbox_rgb(rgb, w, h, g_palm.in_w, g_palm_in);
     memcpy(g_palm.in_buf.data(), g_palm_in.data(), g_palm.in_buf.size() * sizeof(float));
     std::vector<std::vector<float>> palm_out;
     if (!run_model(g_palm, palm_out)) return -1;
@@ -636,7 +638,7 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
     }
 
     // 4. landmark 推理
-    crop_roi(g_rgb.data(), roi_cx, roi_cy, roi_w, roi_theta, g_lm_in);
+    crop_roi(rgb, roi_cx, roi_cy, roi_w, roi_theta, g_lm_in);
     memcpy(g_lm.in_buf.data(), g_lm_in.data(), g_lm.in_buf.size() * sizeof(float));
     std::vector<std::vector<float>> lm_out;
     if (!run_model(g_lm, lm_out)) return -3;
@@ -723,6 +725,24 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
     return 0;
 }
 
+// 相机帧入口: YUV420_888 -> RGB -> 共用核心
+static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const uint8_t* v,
+                         int w, int h,
+                         int yStride, int uStride, int vStride,
+                         int uPix, int vPix,
+                         float* out) {
+    if (g_img_w != w || g_img_h != h) {
+        g_rgb.resize((size_t)w * h * 3);
+    }
+    yuv420_to_rgb(y, u, v, w, h, yStride, uStride, vStride, uPix, vPix, g_rgb.data());
+    if (g_flip_h) flip_rgb_horizontal(g_rgb.data(), w, h);
+
+    // 预览位图每帧更新 (放在一切提前 return 之前)
+    update_preview_bitmap(env, w, h);
+
+    return process_rgb(g_rgb.data(), w, h, out, false);
+}
+
 // ---------------------------------------------------------------------------
 // JNI
 // ---------------------------------------------------------------------------
@@ -731,6 +751,7 @@ extern "C" {
 JNIEXPORT jint JNICALL
 Java_com_rk3588_gesturelib_RknnBridge_nativeInit(JNIEnv* env, jclass,
                                                  jobject assetManager) {
+    std::lock_guard<std::mutex> lk(g_infer_mutex);
     if (g_ready) return 0;
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
     if (!mgr) return -10;
@@ -752,6 +773,7 @@ Java_com_rk3588_gesturelib_RknnBridge_nativeInit(JNIEnv* env, jclass,
 
 JNIEXPORT void JNICALL
 Java_com_rk3588_gesturelib_RknnBridge_nativeDeinit(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> lk(g_infer_mutex);
     if (g_palm.ctx) rknn_destroy(g_palm.ctx);
     if (g_lm.ctx) rknn_destroy(g_lm.ctx);
     g_palm.ctx = 0;
@@ -773,10 +795,53 @@ Java_com_rk3588_gesturelib_RknnBridge_nativeProcessFrame(
     auto v = (const uint8_t*)env->GetDirectBufferAddress(vBuf);
     if (!y || !u || !v) return -20;
 
+    std::lock_guard<std::mutex> lk(g_infer_mutex);
     jfloat* out = env->GetFloatArrayElements(outArr, nullptr);
     int ret = process_frame(env, y, u, v, width, height,
                             yStride, uStride, vStride,
                             uPixStride, vPixStride, out);
+    env->ReleaseFloatArrayElements(outArr, out, 0);
+    return ret;
+}
+
+// 算法帧入口: Bitmap (RGBA_8888) -> RGB888 -> 共用核心。
+// resetTrack=true: 单张图片分析, 丢弃上一帧跟踪 ROI。
+JNIEXPORT jint JNICALL
+Java_com_rk3588_gesturelib_RknnBridge_nativeProcessBitmap(
+        JNIEnv* env, jclass,
+        jobject bitmap, jboolean resetTrack, jfloatArray outArr) {
+
+    std::lock_guard<std::mutex> lk(g_infer_mutex);
+    if (!g_ready) return -40;
+    if (!bitmap) return -41;
+
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) return -42;
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return -43;
+    int w = (int)info.width, h = (int)info.height;
+    if (w <= 0 || h <= 0) return -44;
+
+    void* pixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0 || !pixels) return -45;
+
+    std::vector<uint8_t>& rgb = g_ext_rgb;
+    rgb.resize((size_t)w * h * 3);
+    const auto* src = (const uint8_t*)pixels;
+    for (int yy = 0; yy < h; ++yy) {
+        const uint8_t* srcRow = src + (size_t)yy * info.stride;
+        uint8_t* dstRow = rgb.data() + (size_t)yy * w * 3;
+        for (int xx = 0; xx < w; ++xx) {
+            dstRow[xx * 3 + 0] = srcRow[xx * 4 + 0];
+            dstRow[xx * 3 + 1] = srcRow[xx * 4 + 1];
+            dstRow[xx * 3 + 2] = srcRow[xx * 4 + 2];
+        }
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    if (g_flip_h) flip_rgb_horizontal(rgb.data(), w, h);
+
+    jfloat* out = env->GetFloatArrayElements(outArr, nullptr);
+    int ret = process_rgb(rgb.data(), w, h, out, resetTrack != JNI_FALSE);
     env->ReleaseFloatArrayElements(outArr, out, 0);
     return ret;
 }

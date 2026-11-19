@@ -23,8 +23,12 @@ Real-time camera gesture recognition on the RK3588 6-TOPS NPU:
   👋 wave arm · ✊ fist = confirm · ✌️ victory = back
 - **Swipe / wave auto separation**: one big displacement then stop = directional
   swipe; repeated side-to-side oscillation = wave — no false triggers between them
-- **Packaged as an AAR**: four API groups (recognition overlay / start-stop /
-  real-time callbacks / action mapping) — integrate with a few lines
+- **Packaged as an AAR**: five API groups (recognition overlay / start-stop /
+  real-time callbacks / action mapping / algorithm-frame input) — integrate with a few lines
+- **Algorithm-frame input**: works without a camera — feed a `Bitmap` image or
+  external YUV frames straight into the NPU; results come back through a callback
+  (gesture / confidence / 21 landmarks / palm box / latency), and continuous-frame
+  mode reuses the full temporal state machine
 - **Configurable**: every gesture can be remapped or set to
   "recognize only, no action"; global action gap prevents false triggers
 - **root-powered**: key injection (confirm / back), auto permission grant,
@@ -95,6 +99,52 @@ GestureEngine.setAction(GestureId.FIST, GestureAction.BACK)  // remap
 Full API: see the [integration guide](gesturelib/README_API.md) or the demo
 source in `app/`.
 
+### Step 6 · Algorithm-Frame Input (image / external frame → NPU → callback)
+
+Beyond the camera, external frames can be fed into the same NPU pipeline. The demo
+adds an **Algorithm-frame input** card: pick an image and see the result.
+
+```kotlin
+GestureEngine.init(context)
+
+// one-shot: image → NPU → callback (async, callback on a background thread)
+GestureEngine.analyzeImage(bitmap) { r ->
+    if (r != null && r.hasHand) {
+        Log.i("Demo", "${r.gestureName} score=${r.score} ${r.inferenceMs}ms")
+        val landmarks = r.landmarks      // 21×3, normalized image coords
+    }
+}
+
+// blocking variant (do not call on the main thread)
+val result: FrameDetection? = GestureEngine.analyzeImage(bitmap)
+
+// continuous external frames (video stream / other camera / pre-processed frames)
+GestureEngine.startFrameInput()
+GestureEngine.pushFrame(bitmap)      // call per frame; dropped when busy
+GestureEngine.pushYuvFrame(y, u, v, width, height,
+    yStride, uStride, vStride, uPixelStride, vPixelStride)
+GestureEngine.stopFrameInput()
+```
+
+`FrameDetection` fields:
+
+| Field | Meaning |
+|-------|---------|
+| `hasHand` | whether a hand was detected in this frame |
+| `gesture` / `gestureName` | static gesture id / name |
+| `score` | landmark confidence 0..1 |
+| `openFingers` | extended fingers 0..5 |
+| `palmX/Y/W/H` | palm box (normalized) |
+| `landmarks` | 21×3 landmarks (x,y,z normalized) |
+| `inferenceMs` | NPU latency for this frame |
+
+> Continuous-frame mode reuses the full temporal state machine: `onFrame` /
+> `onGestureTriggered` still fire and action mapping still applies — only the frame
+> source changes. Frame-input mode never opens the camera and needs no camera
+> permission; calling `startRecognition()` exits it automatically.
+> Any input size works (letterboxed internally); coordinates are normalized to the
+> input frame size.
+
 ## 🔨 Build from Source
 
 ```bash
@@ -110,7 +160,7 @@ Requires: JDK 17 · Android SDK 34 · NDK 26.3 · CMake 3.22.1
 ## 🧠 How It Works
 
 ```
-Camera2 (640×480 YUV) → JNI: YUV→RGB → letterbox 192
+Camera YUV420_888 / Bitmap image / external YUV frame → JNI: →RGB → letterbox 192
   → palm_detection.rknn (NPU) → 2016-anchor decode + NMS
   → rotated ROI → hand_landmark.rknn (NPU 224×224) → 21 landmarks
   → geometric static-pose classification (palm / fist / victory) + palm trajectory
@@ -121,6 +171,9 @@ Camera2 (640×480 YUV) → JNI: YUV→RGB → letterbox 192
       ├─ fist confirm: root input keyevent 23 (DPAD_CENTER)
       └─ victory back: accessibility globalBack / root keyevent 4
 ```
+
+Camera frames and algorithm frames share one RGB inference core (serialized in
+JNI); single-image analysis resets the tracking ROI and forces palm detection.
 
 Decode math strictly follows the official MediaPipe sources
 (SSD anchors / box decode / rect transformation).

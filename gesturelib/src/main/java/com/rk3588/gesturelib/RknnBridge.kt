@@ -46,8 +46,22 @@ object RknnBridge {
         "无", "✋ 张掌", "✊ 拳头", "✌️ 剪刀手", "👋 挥手"
     )
 
-    fun init(am: AssetManager): Int = nativeInit(am)
-    fun deinit() = nativeDeinit()
+    /** NPU 模型是否已加载 (init 成功且未 deinit) */
+    @Volatile
+    var ready = false
+        private set
+
+    fun init(am: AssetManager): Int {
+        val rc = nativeInit(am)
+        ready = rc == 0
+        return rc
+    }
+
+    fun deinit() {
+        nativeDeinit()
+        ready = false
+    }
+
     fun allocOut(): FloatArray = nativeAllocOut()
 
     fun process(
@@ -58,6 +72,14 @@ object RknnBridge {
         out: FloatArray
     ): Int = nativeProcessFrame(y, u, v, width, height, yStride, uStride, vStride,
         uPixStride, vPixStride, out)
+
+    /**
+     * 算法帧推理: Bitmap (ARGB_8888) → NPU → out。
+     * @param resetTrack true = 单张图片分析, 丢弃上一帧跟踪 ROI
+     * @return 0 成功; 负数为错误码 (-40 未初始化 / -42 位图不可读 / -43 非 RGBA_8888)
+     */
+    fun processBitmap(bitmap: android.graphics.Bitmap, resetTrack: Boolean, out: FloatArray): Int =
+        nativeProcessBitmap(bitmap, resetTrack, out)
 
     fun setFlipH(v: Boolean) = nativeSetFlipH(v)
 
@@ -81,6 +103,9 @@ object RknnBridge {
         out: FloatArray
     ): Int
     private external fun nativeSetFlipH(flip: Boolean)
+    private external fun nativeProcessBitmap(
+        bitmap: android.graphics.Bitmap, resetTrack: Boolean, out: FloatArray
+    ): Int
     private external fun nativeSetPreviewBitmaps(a: android.graphics.Bitmap, b: android.graphics.Bitmap)
     private external fun nativeCopyPreview(dst: android.graphics.Bitmap): Boolean
     private external fun nativeFps(): Float

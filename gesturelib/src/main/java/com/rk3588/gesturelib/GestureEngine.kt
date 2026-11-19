@@ -2,8 +2,10 @@ package com.rk3588.gesturelib
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.util.Log
 import androidx.core.content.ContextCompat
+import java.nio.ByteBuffer
 
 /**
  * NPU 手势识别引擎 (单例) —— 库的公开入口。
@@ -15,10 +17,14 @@ import androidx.core.content.ContextCompat
  * engine.setActionHandler { action, g, dir -> true }   // 可选: 接管动作
  * engine.setOnGestureListener(listener)                // 可选: 实时回调
  * engine.showOverlay(true)                             // 1. 开启悬浮识别框
- * engine.startRecognition()                            // 2. 开始识别
+ * engine.startRecognition()                            // 2. 开始识别 (相机)
  * engine.stopRecognition()                             //    关闭识别
  * engine.setAction(GestureId.WAVE, null)               // 4. 该手势只识别不动作
  * engine.setAction(GestureId.FIST, GestureAction.BACK) // 4. 重映射动作
+ *
+ * engine.analyzeImage(bitmap) { r -> }                 // 5. 图片 → NPU → 回调
+ * engine.startFrameInput()                             // 5. 外部帧流模式
+ * engine.pushFrame(bitmap)                             //    送入一帧
  * ```
  *
  * 手势集: ✋ 张掌挥动 = 4 方向滑动 · ✊ 拳头 = 确定 · ✌️ 剪刀手 = 返回 · 👋 挥手 = 只回调
@@ -62,9 +68,10 @@ object GestureEngine {
         }
     }
 
-    /** 2. 开始识别: 启动前台服务 (相机 + NPU 管线) */
+    /** 2. 开始识别: 启动前台服务 (相机 + NPU 管线)。会先退出外部帧模式 */
     fun startRecognition() {
         val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        if (FrameInputPipeline.active) FrameInputPipeline.stop()
         // 无障碍被系统重置时 root 自愈
         if (!GestureAccessibility.isConnected() && GestureConfig.rootFallback) {
             Thread {
@@ -98,6 +105,79 @@ object GestureEngine {
     fun hideOverlay() {
         overlayWanted = false
         GestureService.instance?.applyOverlay()
+    }
+
+    // ------------------------------------------------------------------
+    // 5. 算法帧输入 (图片 / 外部帧 → NPU → 回调)
+    // ------------------------------------------------------------------
+
+    /** 是否处于外部帧模式 */
+    val isFrameInputActive: Boolean get() = FrameInputPipeline.active
+
+    /**
+     * 单帧分析: 一张图片 → NPU → 回调 (异步, 回调在后台线程)。
+     * 不经过时序状态机, 不触发任何动作; NPU 模型按需加载, 无需先 startRecognition()。
+     *
+     * @param callback result = null 表示推理失败 (模型缺失 / 位图格式不支持)
+     */
+    fun analyzeImage(bitmap: Bitmap, callback: FrameAnalyzer) {
+        val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        FrameInputPipeline.analyzeAsync(ctx, bitmap, callback)
+    }
+
+    /**
+     * 单帧分析 (阻塞版)。**勿在主线程调用**。
+     * @return null = 推理失败
+     */
+    fun analyzeImage(bitmap: Bitmap): FrameDetection? {
+        val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        return FrameInputPipeline.analyzeBlocking(ctx, bitmap)
+    }
+
+    /**
+     * 进入外部帧模式: 不打开相机, 由调用方逐帧送入 Bitmap / YUV。
+     * 与相机识别互斥 —— 相机识别运行中时返回 false; 反之调用 startRecognition() 会退出本模式。
+     *
+     * @return true = 已就绪 (NPU 初始化成功)
+     */
+    fun startFrameInput(): Boolean {
+        val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        return FrameInputPipeline.start(ctx)
+    }
+
+    /** 退出外部帧模式 */
+    fun stopFrameInput() = FrameInputPipeline.stop()
+
+    /**
+     * 送入一帧 Bitmap (异步推理; 上一帧未处理完时自动丢帧)。
+     * 连续帧模式复用完整时序状态机: [GestureListener.onFrame] / [GestureListener.onGestureTriggered]
+     * 照常回调, 手势→动作映射同样生效。
+     *
+     * 注意: 调用方需保证 bitmap 在回调前不被 recycle。
+     * @return true = 已接收; false = 未启用外部帧模式或本帧被丢弃
+     */
+    fun pushFrame(bitmap: Bitmap): Boolean {
+        val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        return FrameInputPipeline.pushBitmap(ctx, bitmap)
+    }
+
+    /**
+     * 送入一帧原始 YUV420_888 (异步推理; 忙时丢帧)。
+     * ByteBuffer 必须为 direct buffer, 且在回调前保持有效。
+     *
+     * @return true = 已接收; false = 未启用外部帧模式或本帧被丢弃
+     */
+    fun pushYuvFrame(
+        y: ByteBuffer, u: ByteBuffer, v: ByteBuffer,
+        width: Int, height: Int,
+        yStride: Int, uStride: Int, vStride: Int,
+        uPixelStride: Int, vPixelStride: Int
+    ): Boolean {
+        val ctx = appContext ?: throw IllegalStateException("先调用 GestureEngine.init(context)")
+        return FrameInputPipeline.pushYuv(
+            ctx, y, u, v, width, height,
+            yStride, uStride, vStride, uPixelStride, vPixelStride
+        )
     }
 
     // ------------------------------------------------------------------
@@ -172,8 +252,25 @@ object GestureEngine {
     // 内部: 服务回调
     // ------------------------------------------------------------------
 
-    internal fun dispatchFrame(result: FrameResult) {
-        listener?.onFrame(result)
+    /** 统一帧结果出口: 更新最新快照 + 分发 onFrame (相机帧与外部帧共用) */
+    internal fun notifyFrame(out: FloatArray) {
+        RecognitionState.update(out)
+        val l = listener ?: return
+        val lm = FloatArray(63)
+        System.arraycopy(out, RknnBridge.OUT_LM, lm, 0, 63)
+        l.onFrame(
+            FrameResult(
+                out[RknnBridge.OUT_GESTURE].toInt(),
+                out[RknnBridge.OUT_SCORE],
+                out[RknnBridge.OUT_PALM_VALID] > 0.5f,
+                out[RknnBridge.OUT_PALM_X],
+                out[RknnBridge.OUT_PALM_Y],
+                out[RknnBridge.OUT_PALM_W],
+                out[RknnBridge.OUT_PALM_H],
+                lm,
+                out[RknnBridge.OUT_MS]
+            )
+        )
     }
 
     /** 动作触发点: 回调 -> 映射决策 -> (处理器 | 内置执行) */

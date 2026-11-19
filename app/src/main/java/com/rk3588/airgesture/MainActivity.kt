@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -18,10 +19,12 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.rk3588.gesturelib.CameraController
+import com.rk3588.gesturelib.FrameDetection
 import com.rk3588.gesturelib.FrameResult
 import com.rk3588.gesturelib.GestureAction
 import com.rk3588.gesturelib.GestureConfig
@@ -33,11 +36,12 @@ import com.rk3588.gesturelib.RknnBridge
 import com.rk3588.gesturelib.RootShell
 
 /**
- * Demo: 演示 gesturelib 的四类 API
+ * Demo: 演示 gesturelib 的五类 API
  *  1. 开启/关闭悬浮识别框      engine.showOverlay / hideOverlay
  *  2. 开始/关闭识别            engine.startRecognition / stopRecognition
  *  3. 实时手势识别回调          engine.setOnGestureListener
  *  4. 手势→动作映射            engine.setAction / setGestureEnabled / setActionHandler
+ *  5. 算法帧输入               engine.analyzeImage (图片 → NPU → 回调)
  *
  * 手势集: ✋ 张掌挥动 = 方向滑动 · ✊ 拳头 = 确定 · ✌️ 剪刀手 = 返回 · 👋 挥手 = 只回调
  */
@@ -70,6 +74,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rowAccess: TextView
     private lateinit var sbGap: SeekBar
     private lateinit var lblGap: TextView
+    private lateinit var ivFrame: ImageView
+    private lateinit var tvFrameResult: TextView
+
+    // ---- 5. 算法帧输入: 系统图片选择器 → Bitmap → NPU → 回调 ----
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { analyzePickedImage(it) }
+    }
 
     // ---- 3. 实时手势识别回调 ----
     private val listener = object : GestureListener {
@@ -131,6 +142,13 @@ class MainActivity : AppCompatActivity() {
         rowAccess = findViewById(R.id.row_access)
         sbGap = findViewById(R.id.sb_gap)
         lblGap = findViewById(R.id.lbl_gap)
+        ivFrame = findViewById(R.id.iv_frame)
+        tvFrameResult = findViewById(R.id.tv_frame_result)
+
+        // ---- 5. 算法帧输入: 选一张图片 → NPU 推理 → 回调展示 ----
+        findViewById<Button>(R.id.btn_pick_image).setOnClickListener {
+            pickImage.launch("image/*")
+        }
 
         // 预览: 库内双缓冲 → 快照 → 软件层显示
         previewImage.setImageBitmap(uiBitmap)
@@ -254,6 +272,52 @@ class MainActivity : AppCompatActivity() {
         logLines.addLast(line)
         while (logLines.size > 6) logLines.removeFirst()
         tvLog.text = logLines.joinToString("\n")
+    }
+
+    // ---- 5. 算法帧输入 ----
+
+    /** 选图 → 解码 (限制最长边 1280, 避免大图占内存) → 异步 NPU 推理 → 回调展示 */
+    private fun analyzePickedImage(uri: Uri) {
+        val bitmap = decodeSampled(uri, 1280)
+        if (bitmap == null) {
+            Toast.makeText(this, "图片解码失败", Toast.LENGTH_SHORT).show()
+            return
+        }
+        ivFrame.setImageBitmap(bitmap)
+        tvFrameResult.text = "NPU 推理中…"
+        GestureEngine.analyzeImage(bitmap) { r ->
+            ui.post {
+                if (r == null) {
+                    tvFrameResult.text = "推理失败（检查 NPU 驱动 / 模型）"
+                } else {
+                    showFrameResult(r)
+                }
+            }
+        }
+    }
+
+    private fun showFrameResult(r: FrameDetection) {
+        tvFrameResult.text = if (!r.hasHand) {
+            String.format("未检测到手 · 置信度 %.2f · %.0f ms", r.score, r.inferenceMs)
+        } else {
+            String.format(
+                "手势: %s · 置信度 %.2f · %.0f ms\n掌框 (%.2f, %.2f) %.2fx%.2f · 张开手指 %d",
+                r.gestureName, r.score, r.inferenceMs,
+                r.palmX, r.palmY, r.palmW, r.palmH, r.openFingers
+            )
+        }
+        appendLog("图片识别: ${r.gestureName} ${String.format("%.0f", r.inferenceMs)}ms")
+    }
+
+    private fun decodeSampled(uri: Uri, maxSide: Int): Bitmap? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (bounds.outWidth / sample > maxSide || bounds.outHeight / sample > maxSide) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    } catch (e: Exception) {
+        null
     }
 
     private fun hasCamera(): Boolean =
