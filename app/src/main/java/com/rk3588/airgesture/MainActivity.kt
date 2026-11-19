@@ -62,8 +62,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLog: TextView
     private lateinit var btnToggle: Button
     private lateinit var btnOverlay: Button
-    private lateinit var sbGap: SeekBar
-    private lateinit var lblGap: TextView
     private lateinit var ivFrame: ImageView
     private lateinit var tvFrameResult: TextView
 
@@ -127,8 +125,6 @@ class MainActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tv_log)
         btnToggle = findViewById(R.id.btn_toggle)
         btnOverlay = findViewById(R.id.btn_overlay)
-        sbGap = findViewById(R.id.sb_gap)
-        lblGap = findViewById(R.id.lbl_gap)
         ivFrame = findViewById(R.id.iv_frame)
         tvFrameResult = findViewById(R.id.tv_frame_result)
 
@@ -174,33 +170,6 @@ class MainActivity : AppCompatActivity() {
             overlayShowing = !overlayShowing
             updateOverlayBtn()
         }
-
-        // ---- 4. 手势映射开关 (关 = 只识别不动作) ----
-        bindSwitch(R.id.sw_palm, GestureId.PALM, "✋ 张掌挥动 = 方向滑动")
-        bindSwitch(R.id.sw_victory, GestureId.VICTORY, "✌️ 剪刀手 = 返回")
-        bindSwitch(R.id.sw_fist, GestureId.FIST, "✊ 拳头 = 确定")
-        bindSwitch(R.id.sw_wave, GestureId.WAVE, "👋 挥动手臂 (只回调)")
-
-        // 自定义动作处理器示例 (打开后所有动作交给外部处理, 库不再执行内置动作)
-        // GestureEngine.setActionHandler(ActionHandler { action, gesture, dir ->
-        //     android.util.Log.i("Demo", "自定义处理 $action gesture=$gesture dir=$dir")
-        //     true
-        // })
-
-        // 动作间隔
-        sbGap.max = 6000
-        sbGap.progress = GestureConfig.actionGapMs.coerceIn(500, 6000)
-        sbGap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    GestureConfig.actionGapMs = p.coerceAtLeast(500)
-                    lblGap.text = "动作间隔 ${GestureConfig.actionGapMs} ms"
-                }
-            }
-            override fun onStartTrackingTouch(sb: SeekBar?) {}
-            override fun onStopTrackingTouch(sb: SeekBar?) {}
-        })
-        lblGap.text = "动作间隔 ${GestureConfig.actionGapMs} ms"
     }
 
     override fun onResume() {
