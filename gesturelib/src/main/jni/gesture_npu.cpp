@@ -731,7 +731,10 @@ static int process_frame(JNIEnv* env, const uint8_t* y, const uint8_t* u, const 
                          int yStride, int uStride, int vStride,
                          int uPix, int vPix,
                          float* out) {
-    if (g_img_w != w || g_img_h != h) {
+    // g_img_w/g_img_h 会被算法帧路径改写, 而算法帧不分配 g_rgb。
+    // 只按尺寸变化判断会漏掉 "先 analyzeImage 640x480, 再开相机" 的情况:
+    // 此时尺寸相同但 g_rgb 为空 -> yuv420_to_rgb 越界写。按实际容量判断。
+    if (g_rgb.size() != (size_t)w * h * 3) {
         g_rgb.resize((size_t)w * h * 3);
     }
     yuv420_to_rgb(y, u, v, w, h, yStride, uStride, vStride, uPix, vPix, g_rgb.data());
