@@ -10,7 +10,6 @@ import android.util.Log
 class ActionExecutor(private val context: Context) {
     companion object {
         private const val TAG = "ActionExecutor"
-        private const val KEYCODE_BACK = 4
         private const val KEYCODE_DPAD_CENTER = 23   // 确定键 (焦点 OK)
     }
 
@@ -24,8 +23,7 @@ class ActionExecutor(private val context: Context) {
             GestureAction.SWIPE_RIGHT -> swipeHorizontal(1)
 
             GestureAction.BACK -> {
-                if (GestureAccessibility.isConnected()) GestureAccessibility.instance?.globalBack()
-                else if (GestureConfig.rootFallback) keyEvent(KEYCODE_BACK)
+                Log.i(TAG, "收到返回事件（剪刀手默认动作），仅打印日志")
             }
 
             // 确定: 焦点 OK 键 (KEYCODE_DPAD_CENTER), 需 root

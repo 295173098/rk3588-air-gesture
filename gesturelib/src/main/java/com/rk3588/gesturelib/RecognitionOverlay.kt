@@ -6,6 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -27,13 +30,18 @@ class RecognitionOverlay(private val context: Context) {
 
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val density = context.resources.displayMetrics.density
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     // 双缓冲 (推理线程写) + 快照 (本悬浮窗绘制)
     private val bufA: Bitmap = Bitmap.createBitmap(
-        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888)
+        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888
+    )
     private val bufB: Bitmap = Bitmap.createBitmap(
-        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888)
+        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888
+    )
     private val uiBitmap: Bitmap = Bitmap.createBitmap(
-        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888)
+        CameraController.PREVIEW_W, CameraController.PREVIEW_H, Bitmap.Config.ARGB_8888
+    )
 
     private var root: LinearLayout? = null
     private var previewHost: FrameLayout? = null
@@ -85,23 +93,37 @@ class RecognitionOverlay(private val context: Context) {
             setImageBitmap(uiBitmap)
             setLayerType(View.LAYER_TYPE_SOFTWARE, null) // JNI 原地改像素必须软件层
         }
-        val ov = OverlayView(ctx)
-        host.addView(iv, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        host.addView(ov, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        box.addView(host, LinearLayout.LayoutParams(
-            (PREVIEW_W_DP * density).toInt(), (PREVIEW_W_DP * 3 / 4 * density).toInt()))
+        val ov = OverlayView(ctx).apply {
+            showBadge = false // 悬浮窗的识别文字统一显示在预览下方。
+        }
+        host.addView(
+            iv, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        host.addView(
+            ov, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        box.addView(
+            host, LinearLayout.LayoutParams(
+                (PREVIEW_W_DP * density).toInt(), (PREVIEW_W_DP * 3 / 4 * density).toInt()
+            )
+        )
 
-        // 状态栏
+        // 预览下方的状态文字，独立布局以免遮挡画面。
         val tv = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 20f
             setPadding(6, 8, 6, 2)
             text = "手势: -"
         }
-        box.addView(tv, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        box.addView(
+            tv, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         root = box
         previewHost = host
@@ -152,8 +174,14 @@ class RecognitionOverlay(private val context: Context) {
         }
     }
 
-    /** 状态文本 */
+    /** 可从任意线程调用，状态文字始终在主线程更新。 */
     fun setStatus(text: String) {
-        statusText?.text = text
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            statusText?.text = text
+        } else {
+            mainHandler.post {
+                statusText?.text = text
+            }
+        }
     }
 }

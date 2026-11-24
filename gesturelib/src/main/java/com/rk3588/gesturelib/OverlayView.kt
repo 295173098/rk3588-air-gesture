@@ -15,6 +15,9 @@ class OverlayView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
+    /** 悬浮预览通过下方 TextView 显示文字时，关闭画面内的徽标。 */
+    var showBadge = true
+
     companion object {
         // MediaPipe HAND_CONNECTIONS
         val CONNECTIONS = arrayOf(
@@ -122,6 +125,7 @@ class OverlayView @JvmOverloads constructor(
     }
 
     private fun drawBadge(canvas: Canvas, w: Float, text: String, color: Int) {
+        if (!showBadge) return
         val tw = textPaint.measureText(text)
         canvas.drawRect(w / 2 - tw / 2 - 24, 24f, w / 2 + tw / 2 + 24, 110f, textBgPaint)
         textPaint.color = color
